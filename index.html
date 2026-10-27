@@ -77,7 +77,7 @@ input:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 4px rgba(3
 .clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:30px;height:30px;border-radius:50%;border:0;background:var(--surface-2);color:var(--muted);cursor:pointer;display:none;font-size:.9rem}
 .clear.show{display:block}
 button{font:inherit;cursor:pointer}
-.btn{border:0;border-radius:16px;padding:15px 20px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .15s,box-shadow .2s,opacity .2s}
+.btn{border:0;border-radius:16px;padding:15px 20px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .15s,box-shadow .2s,opacity .2s;text-decoration:none}
 .btn:hover:not(:disabled){transform:translateY(-1px)}
 .btn:disabled{opacity:.65;cursor:wait}
 .btn-primary{color:#fff;background:var(--grad);box-shadow:0 14px 28px rgba(79,140,255,.4)}
@@ -233,12 +233,6 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
   var themeBtn=document.getElementById('theme');
   var root=document.documentElement;
 
-  /* ---------- CONFIG ---------- */
-  var CONFIG={
-    INSTAGRAM_API:'https://api.cobalt.tools/',
-    INSTAGRAM_API_KEY:''
-  };
-
   var TT_HOSTS=/^(www\.|m\.|vm\.|vt\.)?tiktok\.com$/i;
   var IG_HOSTS=/^(www\.)?instagram\.com$/i;
 
@@ -297,7 +291,7 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
   });
 
   /* ---------- downloads ---------- */
-  async function saveFile(vUrl,filename,dlBtn,orig,platform){
+  async function saveFile(vUrl,filename,dlBtn,orig,platform,originalHref){
     dlBtn.textContent='Downloading...';
     try{
       var vr=await withTimeout(vUrl,{mode:'cors'},60000);
@@ -313,15 +307,10 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
       setTimeout(function(){dlBtn.disabled=false;dlBtn.innerHTML=orig;},2000);
     }catch(err){
       dlBtn.disabled=false;
-      // PUSH ATTACK FIX: No auto window.open. Change button to manual link.
       if (platform === 'instagram') {
-         dlBtn.innerHTML = '⚠️ Tap to Open & Save';
-         dlBtn.style.background = 'var(--bad-bg)';
-         dlBtn.style.color = 'var(--bad)';
-         dlBtn.onclick = function() {
-             window.open(vUrl, '_blank'); // Opens only when user clicks again
-         };
-         toast('Browser blocked direct save. Click the button to open.');
+         // Fallback: Turn button into a manual link if CORS blocks the blob fetch
+         dlBtn.outerHTML = '<a href="' + vUrl + '" target="_blank" rel="noopener noreferrer" class="btn btn-dl" style="background:var(--surface-2); color:var(--ink); text-decoration:none; border:1px solid var(--line); box-shadow:none;">⚠️ Open to Save</a>';
+         toast('Direct save blocked. Open to save manually.');
       } else {
          dlBtn.textContent='Failed, try again';
          setTimeout(function(){dlBtn.innerHTML=orig;},2500);
@@ -346,7 +335,7 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
       if(vUrl.indexOf('//')===0)vUrl='https:'+vUrl;
       else if(vUrl.charAt(0)==='/')vUrl='https://www.tikwm.com'+vUrl;
       var ext=isAudio?'.mp3':'.mp4';
-      await saveFile(vUrl,'tiktok-'+(d.data.id||Date.now())+ext,dlBtn,orig,'tiktok');
+      await saveFile(vUrl,'tiktok-'+(d.data.id||Date.now())+ext,dlBtn,orig,'tiktok',href);
     }catch(e){
       dlBtn.disabled=false;
       dlBtn.textContent='Failed, try again';
@@ -355,34 +344,43 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
     }
   }
 
+  // --- SMART INSTAGRAM HACK ---
   async function downloadInstagram(href,dlBtn){
     var orig=dlBtn.innerHTML;
     dlBtn.disabled=true;
-    dlBtn.innerHTML='<span class="spin"></span> Preparing...';
-    if(!CONFIG.INSTAGRAM_API){
-      dlBtn.disabled=false;dlBtn.innerHTML=orig;
-      toast('Instagram server is not set up yet');
-      return;
-    }
+    dlBtn.innerHTML='<span class="spin"></span> Fetching...';
+    
     try{
-      var headers={'Content-Type':'application/json','Accept':'application/json'};
-      if(CONFIG.INSTAGRAM_API_KEY)headers['Authorization']='Api-Key '+CONFIG.INSTAGRAM_API_KEY;
-      var r=await withTimeout(CONFIG.INSTAGRAM_API,{method:'POST',headers:headers,body:JSON.stringify({url:href})},25000);
-      var d=await r.json();
-      if(!d||d.status==='error')throw new Error((d&&d.error&&d.error.code)||'error');
-      var vUrl=null;
-      if(d.status==='tunnel'||d.status==='redirect')vUrl=d.url;
-      else if(d.status==='picker'&&d.picker&&d.picker.length){
-        var vid=d.picker.filter(function(p){return p.type==='video';})[0]||d.picker[0];
-        vUrl=vid.url;
-      }
-      if(!vUrl)throw new Error('No URL');
-      if(vUrl.indexOf('//')===0)vUrl='https:'+vUrl;
-      await saveFile(vUrl,'instagram-'+Date.now()+'.mp4',dlBtn,orig,'instagram');
+      // 1. Extract shortcode from URL (e.g., /reel/C123456789/ or /p/C123456789/)
+      var match = href.match(/(?:reel|p)\/([A-Za-z0-9_-]+)/);
+      if(!match) throw new Error('Invalid Insta URL');
+      var code = match[1];
+      
+      // 2. Use CORS proxy to fetch the embed page
+      var embedUrl = 'https://www.instagram.com/p/' + code + '/embed/captioned/';
+      var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(embedUrl);
+      
+      var r = await withTimeout(proxyUrl, {}, 15000);
+      var html = await r.text();
+      
+      // 3. Extract video URL from the page source
+      var vidMatch = html.match(/"video_url":"([^"]+)"/);
+      if(!vidMatch) throw new Error('No video found');
+      
+      var vUrl = vidMatch[1]
+        .replace(/\\u0026/g, '&') // Fix unicode ampersand
+        .replace(/&amp;/g, '&')   // Fix HTML ampersand
+        .replace(/\\/g, '');      // Remove escape slashes
+        
+      if(vUrl.indexOf('//')===0) vUrl='https:'+vUrl;
+      
+      // 4. Download the extracted video URL
+      await saveFile(vUrl,'instagram-'+Date.now()+'.mp4',dlBtn,orig,'instagram',href);
+
     }catch(e){
       dlBtn.disabled=false;
       dlBtn.textContent='Failed, try again';
-      toast('Could not download. Try again.');
+      toast('Instagram blocked the request. Try another link.');
       setTimeout(function(){dlBtn.innerHTML=orig;},2500);
     }
   }
