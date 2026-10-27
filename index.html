@@ -233,8 +233,7 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
   var themeBtn=document.getElementById('theme');
   var root=document.documentElement;
 
-  /* ---------- CONFIG ---------- 
-     Ithula INSTAGRAM_API already public Cobalt server ku set pannirukken. */
+  /* ---------- CONFIG ---------- */
   var CONFIG={
     INSTAGRAM_API:'https://api.cobalt.tools/',
     INSTAGRAM_API_KEY:''
@@ -298,7 +297,7 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
   });
 
   /* ---------- downloads ---------- */
-  async function saveFile(vUrl,filename,dlBtn,orig){
+  async function saveFile(vUrl,filename,dlBtn,orig,platform){
     dlBtn.textContent='Downloading...';
     try{
       var vr=await withTimeout(vUrl,{mode:'cors'},60000);
@@ -313,10 +312,20 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
       toast('Saved to your device ✓');
       setTimeout(function(){dlBtn.disabled=false;dlBtn.innerHTML=orig;},2000);
     }catch(err){
-      window.open(vUrl,'_blank','noopener');
-      dlBtn.textContent='Opened in new tab';
-      toast('Long-press or right-click to save');
-      setTimeout(function(){dlBtn.disabled=false;dlBtn.innerHTML=orig;},2200);
+      dlBtn.disabled=false;
+      // PUSH ATTACK FIX: No auto window.open. Change button to manual link.
+      if (platform === 'instagram') {
+         dlBtn.innerHTML = '⚠️ Tap to Open & Save';
+         dlBtn.style.background = 'var(--bad-bg)';
+         dlBtn.style.color = 'var(--bad)';
+         dlBtn.onclick = function() {
+             window.open(vUrl, '_blank'); // Opens only when user clicks again
+         };
+         toast('Browser blocked direct save. Click the button to open.');
+      } else {
+         dlBtn.textContent='Failed, try again';
+         setTimeout(function(){dlBtn.innerHTML=orig;},2500);
+      }
     }
   }
 
@@ -337,7 +346,7 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
       if(vUrl.indexOf('//')===0)vUrl='https:'+vUrl;
       else if(vUrl.charAt(0)==='/')vUrl='https://www.tikwm.com'+vUrl;
       var ext=isAudio?'.mp3':'.mp4';
-      await saveFile(vUrl,'tiktok-'+(d.data.id||Date.now())+ext,dlBtn,orig);
+      await saveFile(vUrl,'tiktok-'+(d.data.id||Date.now())+ext,dlBtn,orig,'tiktok');
     }catch(e){
       dlBtn.disabled=false;
       dlBtn.textContent='Failed, try again';
@@ -369,11 +378,11 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
       }
       if(!vUrl)throw new Error('No URL');
       if(vUrl.indexOf('//')===0)vUrl='https:'+vUrl;
-      await saveFile(vUrl,'instagram-'+Date.now()+'.mp4',dlBtn,orig);
+      await saveFile(vUrl,'instagram-'+Date.now()+'.mp4',dlBtn,orig,'instagram');
     }catch(e){
       dlBtn.disabled=false;
       dlBtn.textContent='Failed, try again';
-      toast('Could not download. Is the post public?');
+      toast('Could not download. Try again.');
       setTimeout(function(){dlBtn.innerHTML=orig;},2500);
     }
   }
