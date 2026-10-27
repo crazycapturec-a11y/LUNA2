@@ -233,6 +233,13 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
   var themeBtn=document.getElementById('theme');
   var root=document.documentElement;
 
+  /* ---------- CONFIG ---------- 
+     Ithula INSTAGRAM_API already public Cobalt server ku set pannirukken. */
+  var CONFIG={
+    INSTAGRAM_API:'https://api.cobalt.tools/',
+    INSTAGRAM_API_KEY:''
+  };
+
   var TT_HOSTS=/^(www\.|m\.|vm\.|vt\.)?tiktok\.com$/i;
   var IG_HOSTS=/^(www\.)?instagram\.com$/i;
 
@@ -343,27 +350,32 @@ footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);text-al
     var orig=dlBtn.innerHTML;
     dlBtn.disabled=true;
     dlBtn.innerHTML='<span class="spin"></span> Preparing...';
-    var attempts=[
-      {url:'https://api.cobalt.tools/api/json',opts:{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({url:href})},parse:function(d){return d.url||(d.picker&&d.picker[0]&&d.picker[0].url);}},
-      {url:'https://co.wuk.sh/api/json',opts:{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({url:href})},parse:function(d){return d.url;}}
-    ];
-    for(var i=0;i<attempts.length;i++){
-      try{
-        dlBtn.innerHTML='<span class="spin"></span> Preparing... ('+(i+1)+'/2)';
-        var r=await withTimeout(attempts[i].url,attempts[i].opts,20000);
-        if(!r.ok)continue;
-        var d=await r.json();
-        var vUrl=attempts[i].parse(d);
-        if(!vUrl)continue;
-        if(vUrl.indexOf('//')===0)vUrl='https:'+vUrl;
-        await saveFile(vUrl,'instagram-'+Date.now()+'.mp4',dlBtn,orig);
-        return;
-      }catch(e){continue;}
+    if(!CONFIG.INSTAGRAM_API){
+      dlBtn.disabled=false;dlBtn.innerHTML=orig;
+      toast('Instagram server is not set up yet');
+      return;
     }
-    window.open(href,'_blank','noopener');
-    dlBtn.innerHTML='Opened on Instagram';
-    toast('Download service busy. Opened the original link.');
-    setTimeout(function(){dlBtn.disabled=false;dlBtn.innerHTML=orig;},2200);
+    try{
+      var headers={'Content-Type':'application/json','Accept':'application/json'};
+      if(CONFIG.INSTAGRAM_API_KEY)headers['Authorization']='Api-Key '+CONFIG.INSTAGRAM_API_KEY;
+      var r=await withTimeout(CONFIG.INSTAGRAM_API,{method:'POST',headers:headers,body:JSON.stringify({url:href})},25000);
+      var d=await r.json();
+      if(!d||d.status==='error')throw new Error((d&&d.error&&d.error.code)||'error');
+      var vUrl=null;
+      if(d.status==='tunnel'||d.status==='redirect')vUrl=d.url;
+      else if(d.status==='picker'&&d.picker&&d.picker.length){
+        var vid=d.picker.filter(function(p){return p.type==='video';})[0]||d.picker[0];
+        vUrl=vid.url;
+      }
+      if(!vUrl)throw new Error('No URL');
+      if(vUrl.indexOf('//')===0)vUrl='https:'+vUrl;
+      await saveFile(vUrl,'instagram-'+Date.now()+'.mp4',dlBtn,orig);
+    }catch(e){
+      dlBtn.disabled=false;
+      dlBtn.textContent='Failed, try again';
+      toast('Could not download. Is the post public?');
+      setTimeout(function(){dlBtn.innerHTML=orig;},2500);
+    }
   }
 
   /* ---------- result UI ---------- */
