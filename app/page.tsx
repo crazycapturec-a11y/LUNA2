@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export default function Home() {
   const [platform, setPlatform] = useState<'TikTok' | 'Instagram'>('TikTok');
@@ -12,6 +12,7 @@ export default function Home() {
   const [history, setHistory] = useState<any[]>([]);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [showSupport, setShowSupport] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   
   // Modal states
   const [showPrivacy, setShowPrivacy] = useState(false);
@@ -23,6 +24,7 @@ export default function Home() {
   const [currentLang, setCurrentLang] = useState('English');
 
   const WHATSAPP_NUM = "94742108549";
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const sky = document.getElementById('sky');
@@ -39,59 +41,90 @@ export default function Home() {
     if (saved) setHistory(JSON.parse(saved));
   }, []);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      } else if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(tag)) {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const saveToHistory = (item: any) => {
-    const newHist = [item, ...history.filter(h => h.url !== item.url)].slice(0, 4);
-    setHistory(newHist);
-    localStorage.setItem('luna-history', JSON.stringify(newHist));
+    setHistory((prev) => {
+      const newHist = [item, ...prev.filter(h => h.url !== item.url)].slice(0, 4);
+      localStorage.setItem('luna-history', JSON.stringify(newHist));
+      return newHist;
+    });
   };
 
-  const handlePaste = async () => {
+  const extractUrl = (text: string) => {
+    const match = text.match(/https?:\/\/[^\s<>"']+/i);
+    return match ? match[0].replace(/[).,;!?"']+$/, '') : text.trim();
+  };
+
+  const detectPlatform = (value: string): 'TikTok' | 'Instagram' | null => {
     try {
-      const text = await navigator.clipboard.readText();
-      if (text) { setUrl(text); setError(null); setShowSupport(false); }
-    } catch (err) { setError('Tap and hold the bar to paste.'); }
+      const host = new URL(value.includes('://') ? value : `https://${value}`).hostname.toLowerCase();
+      if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) return 'TikTok';
+      if (host === 'instagram.com' || host.endsWith('.instagram.com')) return 'Instagram';
+    } catch {}
+    return null;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleUrlChange = (value: string) => {
+    setUrl(value);
+    setError(null);
+    setShowSupport(false);
+    const detected = detectPlatform(extractUrl(value));
+    if (detected) setPlatform(detected);
+  };
+
+  const fetchVideo = async (rawValue: string, requestedPlatform: 'TikTok' | 'Instagram' = platform) => {
+    const cleanedUrl = extractUrl(rawValue);
+    const detectedPlatform = detectPlatform(cleanedUrl);
+    const activePlatform = detectedPlatform ?? requestedPlatform;
+
+    if (cleanedUrl !== rawValue) setUrl(cleanedUrl);
+    if (detectedPlatform) setPlatform(detectedPlatform);
+
     setIsLoading(true);
     setError(null);
     setResult(null);
+    setIsPlaying(false);
     setShowSupport(false);
 
-    if (!url.trim()) {
+    if (!cleanedUrl.trim()) {
       setError('Please paste a link first.');
       setIsLoading(false);
       return;
     }
 
-    const isIG = url.includes('instagram.com');
-    const isTT = url.includes('tiktok.com');
-
-    if (platform === 'TikTok' && !isTT) {
-      setError('That link is not a TikTok link. Switch to Instagram or paste a TikTok link.');
-      setIsLoading(false);
-      setShowSupport(true);
-      return;
-    }
-
-    if (platform === 'Instagram' && !isIG) {
-      setError('That link is not an Instagram link. Switch to TikTok or paste an Instagram link.');
+    if (!detectedPlatform) {
+      setError("That doesn't look like a TikTok or Instagram link. Use Share → Copy link, then try again.");
       setIsLoading(false);
       setShowSupport(true);
       return;
     }
 
     try {
-      if (platform === 'Instagram') {
+      if (activePlatform === 'Instagram') {
         const res = await fetch('/api/download', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url }),
+          body: JSON.stringify({ url: cleanedUrl }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to fetch.');
-        
+
         const newResult = {
           platform: 'Instagram',
           title: 'Instagram Video',
@@ -100,20 +133,20 @@ export default function Home() {
           hdUrl: data.mediaUrl,
           sdUrl: data.mediaUrl,
           mp3Url: null,
-          url
+          url: cleanedUrl
         };
         setResult(newResult);
         saveToHistory(newResult);
       } else {
-        const res = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`);
+        const res = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(cleanedUrl)}`);
         const data = await res.json();
         if (data.code !== 0 || !data.data) throw new Error('Could not extract TikTok video.');
-        
+
         let hd = data.data.hdplay || data.data.play;
         let sd = data.data.play;
         let music = data.data.music;
-        if (hd.indexOf('//') === 0) hd = 'https:' + hd;
-        if (sd.indexOf('//') === 0) sd = 'https:' + sd;
+        if (hd && hd.indexOf('//') === 0) hd = 'https:' + hd;
+        if (sd && sd.indexOf('//') === 0) sd = 'https:' + sd;
         if (music && music.indexOf('//') === 0) music = 'https:' + music;
 
         const newResult = {
@@ -124,7 +157,7 @@ export default function Home() {
           hdUrl: hd,
           sdUrl: sd,
           mp3Url: music,
-          url
+          url: cleanedUrl
         };
         setResult(newResult);
         saveToHistory(newResult);
@@ -135,6 +168,35 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handlePaste = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) {
+        setError('Your clipboard is empty — copy a link first.');
+        return;
+      }
+      const cleanedUrl = extractUrl(text);
+      const detected = detectPlatform(cleanedUrl);
+      setUrl(cleanedUrl);
+      setError(null);
+      setShowSupport(false);
+      if (detected) {
+        setPlatform(detected);
+        await fetchVideo(cleanedUrl, detected);
+      } else {
+        inputRef.current?.focus();
+      }
+    } catch (err) {
+      setError('Tap and hold the bar to paste.');
+      inputRef.current?.focus();
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchVideo(url, platform);
   };
 
   const handleDownload = (mediaUrl: string | null, filename: string) => {
@@ -189,25 +251,41 @@ export default function Home() {
           <p className="hero-sub">Paste a link, tap Download, and save it in HD in seconds — right from your browser, on any device. MP3 included.</p>
 
           <div className="platform-switch" role="group" aria-label="Choose TikTok or Instagram">
-            <button className={`platform-btn ${platform === 'TikTok' ? 'active' : ''}`} type="button" onClick={() => { setPlatform('TikTok'); setResult(null); setError(null); setShowSupport(false); }}>
+            <button className={`platform-btn ${platform === 'TikTok' ? 'active' : ''}`} type="button" data-platform="TikTok" aria-pressed={platform === 'TikTok'} onClick={() => { setPlatform('TikTok'); setResult(null); setIsPlaying(false); setError(null); setShowSupport(false); }}>
               <span>TikTok</span><small>Videos</small>
             </button>
-            <button className={`platform-btn ${platform === 'Instagram' ? 'active' : ''}`} type="button" onClick={() => { setPlatform('Instagram'); setResult(null); setError(null); setShowSupport(false); }}>
+            <button className={`platform-btn ${platform === 'Instagram' ? 'active' : ''}`} type="button" data-platform="Instagram" aria-pressed={platform === 'Instagram'} onClick={() => { setPlatform('Instagram'); setResult(null); setIsPlaying(false); setError(null); setShowSupport(false); }}>
               <span>Instagram</span><small>Reels &amp; Videos</small>
             </button>
           </div>
           <p className="platform-hint">{platform} selected — paste {prep} {platform} link below.</p>
 
-          <form className="downloader" onSubmit={handleSubmit}>
+          <form className={`downloader ${error ? 'shake' : ''}`} onSubmit={handleSubmit}>
             <div className="bar">
               <div className="field">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
-                <input 
-                  type="text" 
+                <input
+                  ref={inputRef}
+                  type="text"
                   value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder={`Paste ${prep} ${platform} link here…`} 
+                  onChange={(e) => handleUrlChange(e.target.value)}
+                  onPaste={(e) => {
+                    const cleanedUrl = extractUrl(e.clipboardData.getData('text'));
+                    const detected = detectPlatform(cleanedUrl);
+                    if (detected) {
+                      e.preventDefault();
+                      setUrl(cleanedUrl);
+                      setPlatform(detected);
+                      fetchVideo(cleanedUrl, detected);
+                    }
+                  }}
+                  placeholder={`Paste ${prep} ${platform} link here…`}
                 />
+                {url && (
+                  <button type="button" className="btn-clear" style={{ display: 'grid' }} aria-label="Clear link" onClick={() => { setUrl(''); setResult(null); setIsPlaying(false); setError(null); setShowSupport(false); inputRef.current?.focus(); }}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  </button>
+                )}
                 <button type="button" className="btn btn-paste" onClick={handlePaste}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="8" y="2.5" width="8" height="4" rx="1.5"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5v14A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5v-14A1.5 1.5 0 0 1 5.5 4H8"/></svg>
                   Paste
@@ -215,7 +293,7 @@ export default function Home() {
               </div>
               <button type="submit" className="btn btn-download" disabled={isLoading}>
                 {isLoading ? (
-                  <span>Fetching...</span>
+                  <><span className="spinner" aria-hidden="true"></span><span>Fetching…</span></>
                 ) : (
                   <>
                     <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
@@ -248,7 +326,7 @@ export default function Home() {
             <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>MP3 converter</span>
           </div>
           <p className="permission"><strong>Please note:</strong> Only download videos you have permission to save.</p>
-          <p className="sample-line">No link handy? <button type="button" onClick={() => { const sample = platform === 'Instagram' ? 'https://www.instagram.com/reel/DfEUfYFsFVS/' : 'https://www.tiktok.com/@tiktok/video/7106594312292453675'; setUrl(sample); }}>Try a sample {platform} video →</button></p>
+          <p className="sample-line">No link handy? <button type="button" onClick={() => { const sample = platform === 'Instagram' ? 'https://www.instagram.com/reel/DfEUfYFsFVS/' : 'https://www.tiktok.com/@tiktok/video/7106594312292453675'; setUrl(sample); fetchVideo(sample, platform); }}>Try a sample {platform} video →</button></p>
           <p className="kbd-hint">Tip: press <kbd>Ctrl</kbd> + <kbd>K</kbd> to jump to the bar · pasting a link fetches it automatically</p>
 
           {isLoading && (
@@ -266,10 +344,16 @@ export default function Home() {
               <div className="result-card">
                 <div>
                   <div className="preview-box" style={{ aspectRatio: '9/16' }}>
-                    {result.thumbnail ? <img className="cover" src={result.thumbnail} alt="Cover" /> : <div style={{ background: 'var(--bg-3)', width: '100%', height: '100%' }}></div>}
-                    <button className="play-overlay" type="button">
-                      <span className="play-badge"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5Z"/></svg></span>
-                    </button>
+                    {isPlaying && result.hdUrl ? (
+                      <video controls autoPlay playsInline src={result.hdUrl} poster={result.thumbnail || undefined} />
+                    ) : (
+                      <>
+                        {result.thumbnail ? <img className="cover" src={result.thumbnail} alt="Cover" /> : <div style={{ background: 'var(--bg-3)', width: '100%', height: '100%' }}></div>}
+                        <button className="play-overlay" type="button" aria-label="Preview video" onClick={() => setIsPlaying(true)}>
+                          <span className="play-badge"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5Z"/></svg></span>
+                        </button>
+                      </>
+                    )}
                   </div>
                   <div className="preview-actions">
                     <a className="mini-btn" href={result.url} target="_blank" rel="noopener noreferrer">
@@ -302,7 +386,7 @@ export default function Home() {
                       </button>
                     )}
                   </div>
-                  <button className="again" onClick={() => { setResult(null); setUrl(''); }}>↺&nbsp; Download another video</button>
+                  <button className="again" onClick={() => { setResult(null); setIsPlaying(false); setUrl(''); setError(null); setShowSupport(false); window.scrollTo({top: 0, behavior: 'smooth'}); setTimeout(() => inputRef.current?.focus(), 450); }}>↺&nbsp; Download another video</button>
                 </div>
               </div>
             </div>
@@ -317,7 +401,7 @@ export default function Home() {
             </div>
             <div className="history-grid">
               {history.map((item, i) => (
-                <button key={i} className="hist-card" onClick={() => { setUrl(item.url); setResult(item); setPlatform(item.platform); window.scrollTo({top: 0, behavior: 'smooth'}); }}>
+                <button key={i} className="hist-card" onClick={() => { setUrl(item.url); setResult(item); setIsPlaying(false); setPlatform(item.platform); setError(null); setShowSupport(false); window.scrollTo({top: 0, behavior: 'smooth'}); }}>
                   {item.thumbnail ? <img src={item.thumbnail} alt="" /> : <div style={{ aspectRatio: '4/3', background: 'var(--bg-3)' }}></div>}
                   <div className="hc-body">
                     <div className="hc-title">{item.title}</div>
