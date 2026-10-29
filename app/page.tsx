@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function Home() {
   const [platform, setPlatform] = useState<'TikTok' | 'Instagram'>('TikTok');
@@ -12,11 +12,16 @@ export default function Home() {
   const [history, setHistory] = useState<any[]>([]);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [showSupport, setShowSupport] = useState(false);
+  
+  // Modal states
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [showContact, setShowContact] = useState(false);
+  
+  // Language dropdown state (visual only for now)
+  const [isLangOpen, setIsLangOpen] = useState(false);
+  const [currentLang, setCurrentLang] = useState('English');
 
-  // YOUR WHATSAPP NUMBER
   const WHATSAPP_NUM = "94742108549";
 
   useEffect(() => {
@@ -137,6 +142,8 @@ export default function Home() {
     window.location.href = `/api/proxy?url=${encodeURIComponent(mediaUrl)}&filename=${filename}`;
   };
 
+  const prep = platform === 'Instagram' ? 'an' : 'a';
+
   return (
     <>
       <div className="sky" id="sky" aria-hidden="true">
@@ -152,7 +159,25 @@ export default function Home() {
           </a>
           <nav className="nav-links" aria-label="Main">
             <a href="#how">How it works</a>
+            <a href="#supported" className="hide-sm">Supported</a>
             <a href="#faq" className="hide-sm">FAQ</a>
+            
+            {/* Language Dropdown */}
+            <div className="lang" style={{ position: 'relative' }}>
+              <button className="lang-btn" onClick={() => setIsLangOpen(!isLangOpen)}>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.7 3.8 9S14.5 18.4 12 21c-2.5-2.6-3.8-5.7-3.8-9S9.5 5.6 12 3Z"/></svg>
+                <span>{currentLang}</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              {isLangOpen && (
+                <div className="lang-menu" style={{ display: 'block' }}>
+                  <button className={currentLang === 'English' ? 'active' : ''} onClick={() => { setCurrentLang('English'); setIsLangOpen(false); }}>English <span className="code">EN</span></button>
+                  <button className={currentLang === 'Español' ? 'active' : ''} onClick={() => { setCurrentLang('Español'); setIsLangOpen(false); }}>Español <span className="code">ES</span></button>
+                  <button className={currentLang === 'Português' ? 'active' : ''} onClick={() => { setCurrentLang('Português'); setIsLangOpen(false); }}>Português <span className="code">PT</span></button>
+                  <button className={currentLang === 'සිංහල' ? 'active' : ''} onClick={() => { setCurrentLang('සිංහල'); setIsLangOpen(false); }}>සිංහල <span className="code">SI</span></button>
+                </div>
+              )}
+            </div>
           </nav>
         </div>
       </header>
@@ -171,7 +196,7 @@ export default function Home() {
               <span>Instagram</span><small>Reels &amp; Videos</small>
             </button>
           </div>
-          <p className="platform-hint">{platform} selected — paste a {platform} link below.</p>
+          <p className="platform-hint">{platform} selected — paste {prep} {platform} link below.</p>
 
           <form className="downloader" onSubmit={handleSubmit}>
             <div className="bar">
@@ -181,12 +206,22 @@ export default function Home() {
                   type="text" 
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
-                  placeholder={`Paste a ${platform} link here…`} 
+                  placeholder={`Paste ${prep} ${platform} link here…`} 
                 />
-                <button type="button" className="btn btn-paste" onClick={handlePaste}>Paste</button>
+                <button type="button" className="btn btn-paste" onClick={handlePaste}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="8" y="2.5" width="8" height="4" rx="1.5"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5v14A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5v-14A1.5 1.5 0 0 1 5.5 4H8"/></svg>
+                  Paste
+                </button>
               </div>
               <button type="submit" className="btn btn-download" disabled={isLoading}>
-                {isLoading ? 'Fetching...' : 'Download'}
+                {isLoading ? (
+                  <span>Fetching...</span>
+                ) : (
+                  <>
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
+                    <span>Download</span>
+                  </>
+                )}
               </button>
             </div>
           </form>
@@ -206,13 +241,15 @@ export default function Home() {
             </div>
           )}
 
-          <div className="trust">
+          <div className="trust" aria-label="Highlights">
             <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>No sign-up</span><span className="sep">·</span>
             <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>HD quality</span><span className="sep">·</span>
             <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Works on any device</span><span className="sep">·</span>
             <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>MP3 converter</span>
           </div>
           <p className="permission"><strong>Please note:</strong> Only download videos you have permission to save.</p>
+          <p className="sample-line">No link handy? <button type="button" onClick={() => { const sample = platform === 'Instagram' ? 'https://www.instagram.com/reel/DfEUfYFsFVS/' : 'https://www.tiktok.com/@tiktok/video/7106594312292453675'; setUrl(sample); }}>Try a sample {platform} video →</button></p>
+          <p className="kbd-hint">Tip: press <kbd>Ctrl</kbd> + <kbd>K</kbd> to jump to the bar · pasting a link fetches it automatically</p>
 
           {isLoading && (
             <div className="skeleton show">
@@ -234,6 +271,12 @@ export default function Home() {
                       <span className="play-badge"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5Z"/></svg></span>
                     </button>
                   </div>
+                  <div className="preview-actions">
+                    <a className="mini-btn" href={result.url} target="_blank" rel="noopener noreferrer">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 4h6v6M20 4 11 13"/><path d="M19 13.5V19a1.5 1.5 0 0 1-1.5 1.5h-12A1.5 1.5 0 0 1 4 19V7a1.5 1.5 0 0 1 1.5-1.5H11"/></svg>
+                      Original
+                    </a>
+                  </div>
                 </div>
                 <div>
                   <div className="source"><span>{result.platform} Video</span></div>
@@ -242,15 +285,18 @@ export default function Home() {
                   
                   <div className="dl-actions">
                     <button className="btn dl-btn primary" onClick={() => handleDownload(result.hdUrl, 'luna-hd.mp4')}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
                       <span className="grow"><span className="label">Download HD</span><span className="sub">No watermark</span></span>
                       <span className="tag">MP4</span>
                     </button>
                     <button className="btn dl-btn" onClick={() => handleDownload(result.sdUrl, 'luna-sd.mp4')}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
                       <span className="grow"><span className="label">Download SD</span><span className="sub">Smaller file</span></span>
                       <span className="tag">MP4</span>
                     </button>
                     {result.mp3Url && (
                       <button className="btn dl-btn" onClick={() => handleDownload(result.mp3Url, 'luna-audio.mp3')}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>
                         <span className="grow"><span className="label">Download MP3</span><span className="sub">Audio only</span></span>
                         <span className="tag">MP3</span>
                       </button>
@@ -284,32 +330,101 @@ export default function Home() {
         )}
 
         <section id="how" className="wrap">
-          <div className="section-head"><div className="kicker">Simple by design</div><h2>How it works</h2></div>
+          <div className="section-head">
+            <div className="kicker">Simple by design</div>
+            <h2>How it works</h2>
+            <p>Three steps. No apps to install, no account to create.</p>
+          </div>
           <div className="steps">
-            <article className="card"><div className="step-top"><span className="icon">📋</span><span className="step-no">01</span></div><h3>Copy the link</h3><p>Open TikTok or Instagram, tap Share on the video, then choose Copy link.</p></article>
-            <article className="card"><div className="step-top"><span className="icon">📥</span><span className="step-no">02</span></div><h3>Paste it in LUNA</h3><p>Tap Paste — LUNA finds the link and fetches the video automatically.</p></article>
-            <article className="card"><div className="step-top"><span className="icon">✨</span><span className="step-no">03</span></div><h3>Download</h3><p>Preview it, then choose HD, SD or MP3. The file saves straight to your device.</p></article>
+            <article className="card">
+              <div className="step-top">
+                <span className="icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg></span>
+                <span className="step-no">01</span>
+              </div>
+              <h3>Copy the link</h3>
+              <p>Open TikTok or Instagram, tap <strong style={{color:'var(--text)'}}>Share</strong> on the video, then choose <strong style={{color:'var(--text)'}}>Copy link</strong>.</p>
+            </article>
+            <article className="card">
+              <div className="step-top">
+                <span className="icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="8" y="2.5" width="8" height="4" rx="1.5"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5v14A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5v-14A1.5 1.5 0 0 1 5.5 4H8"/><path d="M9 12h6M9 16h4"/></svg></span>
+                <span className="step-no">02</span>
+              </div>
+              <h3>Paste it in LUNA</h3>
+              <p>Tap <strong style={{color:'var(--text)'}}>Paste</strong> — LUNA finds the link even inside messy share text and fetches the video automatically.</p>
+            </article>
+            <article className="card">
+              <div className="step-top">
+                <span className="icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg></span>
+                <span className="step-no">03</span>
+              </div>
+              <h3>Download</h3>
+              <p>Preview it, then choose <strong style={{color:'var(--text)'}}>HD</strong>, <strong style={{color:'var(--text)'}}>SD</strong> or <strong style={{color:'var(--text)'}}>MP3</strong>. The file saves straight to your device.</p>
+            </article>
           </div>
         </section>
 
+        <section className="wrap">
+          <div className="section-head">
+            <div className="kicker">Why LUNA</div>
+            <h2>Made to feel effortless</h2>
+            <p>Everything you need, nothing in your way.</p>
+          </div>
+          <div className="features">
+            <article className="card"><span className="icon moon"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4.5 13.5H11L9.5 22 19 9.5h-6.5L13 2Z"/></svg></span><h3>Fast</h3><p>Real links are fetched in seconds and streamed directly — watch live progress as your file downloads.</p></article>
+            <article className="card"><span className="icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9.5 5 2.5-5 2.5v-5Z" fill="currentColor" stroke="none"/></svg></span><h3>HD quality</h3><p>Best available quality up to 4K when the source offers it, with audio merged automatically when needed.</p></article>
+            <article className="card"><span className="icon moon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M12 3c2.5 3.2 6 7.3 6 11a6 6 0 1 1-12 0c0-3.7 3.5-7.8 6-11Z"/><path d="m4 4 16 16"/></svg></span><h3>No watermark</h3><p>Clean downloads wherever the source makes a clean version available — every format is listed so you can choose.</p></article>
+            <article className="card"><span className="icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg></span><h3>MP3 converter</h3><p>Love the sound? Extract audio as a 320 kbps MP3 in one tap — great for sounds, speeches and music clips.</p></article>
+            <article className="card"><span className="icon moon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg></span><h3>Works everywhere</h3><p>iPhone, Android, Windows, Mac — nothing to install. Add LUNA to your home screen and it behaves like an app.</p></article>
+            <article className="card"><span className="icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M12 3 5 5.8v5.4c0 4.6 3 7.9 7 9.3 4-1.4 7-4.7 7-9.3V5.8L12 3Z"/><path d="m9.2 11.8 2 2 3.6-3.9"/></svg></span><h3>Private by design</h3><p>No accounts, no passwords, no stored videos. History lives only in your browser.</p></article>
+          </div>
+        </section>
+
+        <section id="supported" className="wrap">
+          <div className="section-head">
+            <div className="kicker">One bar, many places</div>
+            <h2>Supported sites</h2>
+            <p>Built for TikTok and Instagram — and quietly great with these too.</p>
+          </div>
+          <div className="supported-grid">
+            <span className="chip"><strong>TikTok</strong></span><span className="chip"><strong>Instagram</strong></span>
+            <span className="chip"><strong>YouTube</strong></span><span className="chip"><strong>Facebook</strong></span>
+            <span className="chip"><strong>X</strong> (Twitter)</span><span className="chip"><strong>Reddit</strong></span>
+            <span className="chip"><strong>Vimeo</strong></span><span className="chip"><strong>Dailymotion</strong></span>
+            <span className="chip"><strong>Twitch</strong> clips</span>
+          </div>
+          <p style={{ textAlign: 'center', color: 'var(--faint)', fontSize: '.85rem', marginTop: '18px' }}>All names above are trademarks of their respective owners. LUNA is not affiliated with any of them.</p>
+        </section>
+
         <section id="faq" className="wrap">
-          <div className="section-head"><div className="kicker">Good to know</div><h2>Frequently asked questions</h2></div>
+          <div className="section-head"><div className="kicker">Good to know</div><h2>Frequently asked questions</h2><p>Quick answers to the things people ask most.</p></div>
           <div className="faq">
             {[
-              { q: "Is LUNA really free?", a: "Yes — free, with no sign-up, no app install and no daily limits." },
-              { q: "Is it safe?", a: "Yes. LUNA never asks for your TikTok or Instagram password. Files stream directly and are not stored on our server." },
-              { q: "Where are my files saved?", a: "Your device's default download location (usually the Downloads folder or Gallery)." },
-              { q: "Can I download private videos?", a: "No. LUNA only works with public videos, by design." }
+              { q: "Is LUNA really free?", a: "Yes — free, with no sign-up, no app install and no daily limits. It runs entirely in your browser plus a small open backend you can even host yourself." },
+              { q: "Is it safe?", a: "Yes. LUNA never asks for your TikTok or Instagram password — any site that does is a red flag. We also don't store downloaded videos." },
+              { q: "Where are my files saved?", a: "Your device's default download location. On Android that's usually Downloads or your gallery; on iPhone check the Files app → Downloads." },
+              { q: "Why did my Instagram link fail?", a: "Instagram is stricter than TikTok: private accounts, age-restricted posts and some Reels require a login we never ask for. Make sure the account is public." },
+              { q: "Can I download private videos?", a: "No — LUNA only works with public videos, by design. Please respect creators." },
+              { q: "What's the difference between HD, SD and 'All formats'?", a: "HD is the best quality (720p+), SD is a smaller file that's faster on slow data. 'All formats' lists every quality." },
+              { q: "Can I install LUNA like an app?", a: "Yes. On Android/Chrome tap 'Install LUNA' when it appears. On iPhone: Share → Add to Home Screen." }
             ].map((item, i) => (
               <div key={i} className={`faq-item ${openFaq === i ? 'open' : ''}`}>
                 <button className="faq-q" onClick={() => setOpenFaq(openFaq === i ? null : i)}>
                   {item.q}<span className="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="m6 9 6 6 6-6"/></svg></span>
                 </button>
-                <div className="faq-a" style={{ maxHeight: openFaq === i ? '200px' : '0px' }}>
+                <div className="faq-a" style={{ maxHeight: openFaq === i ? '250px' : '0px' }}>
                   <p>{item.a}</p>
                 </div>
               </div>
             ))}
+          </div>
+
+          <div className="cta">
+            <h2>Ready when you are 🌙</h2>
+            <p>Your next favourite video is one paste away. Free, in HD, no sign-up.</p>
+            <div className="cta-btns">
+              <button className="btn btn-top" onClick={() => window.scrollTo({top:0, behavior:'smooth'})}>↑&nbsp; Paste a link</button>
+              <button className="btn btn-ghost" onClick={() => alert('To install, use your browser menu and select "Add to Home Screen".')}>⬇&nbsp; Install LUNA</button>
+            </div>
           </div>
         </section>
       </main>
@@ -319,7 +434,8 @@ export default function Home() {
           <div className="footer-grid">
             <div>
               <a className="logo" href="#"><span className="crescent"><svg width="21" height="21" viewBox="0 0 24 24" fill="none"><path d="M20.2 14.2A8.5 8.5 0 1 1 9.8 3.8a7 7 0 1 0 10.4 10.4Z" fill="#FFE9A8"/></svg></span><span>LUNA</span></a>
-              <p className="footer-note">A simple, free way to save TikTok and Instagram videos in HD. Only download videos you have permission to save.</p>
+              <p className="footer-note">A simple, free way to save TikTok and Instagram videos in HD — plus MP3s. Only download videos you have permission to save.</p>
+              <div className="status-line"><span className="status-dot online"></span><span>Server online — real downloads ready</span></div>
             </div>
             <nav className="footer-links">
               <button onClick={() => setShowPrivacy(true)}>Privacy</button>
@@ -329,7 +445,7 @@ export default function Home() {
           </div>
           <div className="legal">
             <span>© 2024 LUNA. All rights reserved.</span>
-            <span>LUNA is not affiliated with TikTok or Instagram.</span>
+            <span>LUNA is not affiliated with TikTok, Instagram or any platform listed.</span>
           </div>
         </div>
       </footer>
