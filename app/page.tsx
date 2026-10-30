@@ -127,9 +127,9 @@ export default function Home() {
 
         const newResult = {
           platform: 'Instagram',
-          title: 'Instagram Video',
-          author: 'Instagram Creator',
-          thumbnail: '',
+          title: data.caption || 'Instagram Video',
+          author: data.username || 'Instagram Creator',
+          thumbnail: data.thumbnail || '',
           hdUrl: data.mediaUrl,
           sdUrl: data.mediaUrl,
           mp3Url: null,
