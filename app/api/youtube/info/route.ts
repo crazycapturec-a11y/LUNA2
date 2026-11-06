@@ -5,7 +5,6 @@ export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get('url');
   if (!url) return NextResponse.json({ error: 'Missing YouTube URL' }, { status: 400 });
 
-  // Extract the video ID from the URL
   const videoId = new URL(url).searchParams.get('v') || url.split('youtu.be/')[1]?.split('?')[0];
   if (!videoId) return NextResponse.json({ error: 'Invalid YouTube URL' }, { status: 400 });
 
@@ -22,6 +21,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: any) {
     console.error('YouTube Info Error:', error.message);
-    return NextResponse.json({ error: 'Could not fetch YouTube video info using youtubei.js.' }, { status: 500 });
+    return NextResponse.json({ error: 'Could not fetch YouTube video info.' }, { status: 500 });
   }
 }
