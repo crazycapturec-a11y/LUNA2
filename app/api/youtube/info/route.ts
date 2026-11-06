@@ -1,22 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { extractVideoId, humanizeYouTubeError, resolveYouTubeVideo } from '../../../lib/youtube';
 
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
+
+type OEmbed = {
+  title?: string;
+  author_name?: string;
+  thumbnail_url?: string;
+};
+
+/**
+ * Returns metadata for the preview card. Resolution is attempted first because it
+ * proves the video can actually be downloaded — no more "thumbnail previews, but
+ * the download button fails" dead end.
+ */
 export async function GET(request: NextRequest) {
-  const url = request.nextUrl.searchParams.get('url');
-  if (!url) return NextResponse.json({ error: 'Missing URL' }, { status: 400 });
+  const urlParam = request.nextUrl.searchParams.get('url');
+  if (!urlParam) return NextResponse.json({ error: 'Missing URL' }, { status: 400 });
+
+  const videoId = extractVideoId(urlParam);
+  if (!videoId) {
+    return NextResponse.json({ error: 'That does not look like a YouTube video link.' }, { status: 400 });
+  }
+
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+  // oEmbed is cheap and always available for public videos: good fallback metadata.
+  let fallback: OEmbed | null = null;
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`,
+      { cache: 'no-store' },
+    );
+    if (res.ok) fallback = (await res.json()) as OEmbed;
+  } catch {
+    /* non-fatal */
+  }
 
   try {
-    const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
-    if (!res.ok) throw new Error('Invalid or private YouTube URL');
-    const data = await res.json();
-
+    const video = await resolveYouTubeVideo(videoId, 'video');
     return NextResponse.json({
       success: true,
-      title: data.title,
-      author: data.author_name,
-      thumbnail: data.thumbnail_url,
-      url: url,
+      videoId,
+      title: video.title || fallback?.title || 'YouTube Video',
+      author: video.author || fallback?.author_name || 'YouTube Creator',
+      thumbnail: video.thumbnail || fallback?.thumbnail_url || '',
+      mimeType: video.mimeType,
+      url: watchUrl,
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    const reason = humanizeYouTubeError(error);
+    if (fallback) {
+      return NextResponse.json({
+        success: true,
+        videoId,
+        title: fallback.title || 'YouTube Video',
+        author: fallback.author_name || 'YouTube Creator',
+        thumbnail: fallback.thumbnail_url || '',
+        url: watchUrl,
+        warning: reason,
+      });
+    }
+    return NextResponse.json({ error: reason }, { status: 502 });
   }
 }
