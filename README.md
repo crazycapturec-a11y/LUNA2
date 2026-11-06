@@ -60,3 +60,7 @@ check the server logs and YouTube's response. The optional `YT_PO_TOKEN`,
 `YT_VISITOR_DATA`, and `YT_COOKIE` settings depend on the YouTube session and do
 not guarantee access; never share their values or commit them to the repository.
 `IG_SESSION_ID` can improve Instagram reel/story reliability.
+
+An optional separately hosted YouTube worker is available as a prototype; see
+[`services/youtube-worker/README.md`](services/youtube-worker/README.md) for its
+security limits, deployment requirements, and unverified end-to-end status.
