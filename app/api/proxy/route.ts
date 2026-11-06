@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get('url');
+  const filename = request.nextUrl.searchParams.get('filename') || 'luna-download.mp4';
 
-  if (!url) {
-    return NextResponse.json({ error: 'Missing URL' }, { status: 400 });
-  }
+  if (!url) return NextResponse.json({ error: 'Missing URL' }, { status: 400 });
 
   try {
     const response = await fetch(url, {
@@ -17,12 +16,10 @@ export async function GET(request: NextRequest) {
     if (!response.ok) throw new Error('Failed to fetch');
 
     const contentType = response.headers.get('content-type') || 'video/mp4';
-    const ext = contentType.includes('video') ? 'mp4' : 'jpg';
-
     return new NextResponse(response.body, {
       headers: {
         'Content-Type': contentType,
-        'Content-Disposition': `attachment; filename="saveclip-download.${ext}"`,
+        'Content-Disposition': `attachment; filename="${filename}"`,
       },
     });
   } catch (error) {
