@@ -135,7 +135,6 @@ export default function Home() {
           title: data.title,
           author: data.author,
           thumbnail: data.thumbnail,
-          videoId: data.videoId,
           url
         };
         setResult(newResult);
@@ -223,9 +222,20 @@ export default function Home() {
     }
   };
 
-  const handleYouTubeDownload = () => {
+  const handleYouTubeDownload = async () => {
     if (!result || !result.url) return;
-    window.location.href = `/api/youtube/download?url=${encodeURIComponent(result.url)}`;
+    setProgress({ show: true, label: 'Fetching YouTube video link...', pct: null });
+    try {
+      const res = await fetch(`/api/youtube/download?url=${encodeURIComponent(result.url)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch');
+      
+      // Now download the direct video URL using our proxy
+      downloadFile(data.mediaUrl, 'youtube-video.mp4', 'YouTube Video');
+    } catch (err) {
+      showToast('Failed to fetch YouTube video.');
+      setProgress({ show: false, label: '', pct: 0 });
+    }
   };
 
   const prep = platform === 'Instagram' ? 'an' : 'a';
@@ -490,7 +500,7 @@ export default function Home() {
               { q: "Is LUNA really free?", a: "Yes — free, with no sign-up, no app install and no daily limits. It runs entirely in your browser plus a small open backend you can even host yourself." },
               { q: "Is it safe?", a: "Yes. LUNA never asks for your TikTok or Instagram password — any site that does is a red flag. We also don't store downloaded videos." },
               { q: "Where are my files saved?", a: "Your device's default download location. On Android that's usually Downloads or your gallery; on iPhone check the Files app → Downloads." },
-              { q: "Why did my YouTube link fail?", a: "YouTube has strict bot protection. If it fails, try a different video, or contact us via WhatsApp. Sometimes cookies expire and need updating." },
+              { q: "Why did my YouTube link fail?", a: "YouTube has strict bot protection. If it fails, try a different video, or contact us via WhatsApp." },
               { q: "Can I download private videos?", a: "No — LUNA only works with public videos, by design. Please respect creators." },
               { q: "Can I install LUNA like an app?", a: "Yes. On Android/Chrome tap 'Install LUNA' when it appears. On iPhone: Share → Add to Home Screen." }
             ].map((item, i) => (
