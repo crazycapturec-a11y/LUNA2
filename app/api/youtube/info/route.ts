@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { fetchFallbackVideo } from '../../../lib/youtube-fallback';
 import { extractVideoId, humanizeYouTubeError, resolveYouTubeVideo } from '../../../lib/youtube';
 
 export const runtime = 'nodejs';
@@ -59,6 +60,22 @@ export async function GET(request: NextRequest) {
         title: fallback.title || 'YouTube Video',
         author: fallback.author_name || 'YouTube Creator',
         thumbnail: fallback.thumbnail_url || '',
+        url: watchUrl,
+        warning: reason,
+      });
+    }
+    // If oEmbed and direct extraction both fail, still allow the preview when a
+    // public instance can actually supply a stream. Close it; download resolves
+    // a fresh URL when the user clicks the button.
+    const instance = await fetchFallbackVideo(videoId);
+    if (instance) {
+      await instance.response.body?.cancel();
+      return NextResponse.json({
+        success: true,
+        videoId,
+        title: instance.title,
+        author: 'YouTube Creator',
+        thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
         url: watchUrl,
         warning: reason,
       });

@@ -78,8 +78,12 @@ export function getInnertube(): Promise<Innertube> {
   return clientPromise;
 }
 
+export type YouTubeClient = InnerTubeClient | 'default';
+
 export type ResolvedVideo = {
   videoId: string;
+  /** Client that produced this URL, so a rejected stream can try another one. */
+  client: YouTubeClient;
   title: string;
   author: string;
   thumbnail: string;
@@ -117,10 +121,13 @@ function writeCache(key: string, value: ResolvedVideo) {
 export async function resolveYouTubeVideo(
   videoId: string,
   kind: 'video' | 'audio' = 'video',
+  options: { refresh?: boolean; excludeClients?: YouTubeClient[] } = {},
 ): Promise<ResolvedVideo> {
   const cacheKey = `${kind}:${videoId}`;
-  const cached = readCache(cacheKey);
-  if (cached) return cached;
+  const cached = options.refresh ? null : readCache(cacheKey);
+  if (cached && !options.excludeClients?.includes(cached.client)) return cached;
+  // Do not allow a previously rejected URL to be reused if refresh fails.
+  if (options.refresh || cached) cache.delete(cacheKey);
 
   let yt: Awaited<ReturnType<typeof getInnertube>>;
   try {
@@ -134,6 +141,7 @@ export async function resolveYouTubeVideo(
   let lastError: Error | null = null;
 
   for (const client of CLIENTS) {
+    if (options.excludeClients?.includes(client ?? 'default')) continue;
     try {
       const info = await yt.getBasicInfo(videoId, client ? { client } : undefined);
 
@@ -170,7 +178,10 @@ export async function resolveYouTubeVideo(
         continue;
       }
 
-      const streamUrl = format.url || (await format.decipher(yt.session.player));
+      // Even a direct URL can contain YouTube's throttling parameter (n), which
+      // youtubei.js must transform. Skipping decipher for format.url can make an
+      // otherwise valid stream fail or download extremely slowly.
+      const streamUrl = await format.decipher(yt.session.player);
       if (!streamUrl) {
         lastError = new Error('Could not resolve the video stream.');
         continue;
@@ -179,6 +190,7 @@ export async function resolveYouTubeVideo(
       const thumbnails = info.basic_info.thumbnail || [];
       const resolved: ResolvedVideo = {
         videoId,
+        client: client ?? 'default',
         title: info.basic_info.title || 'YouTube Video',
         author: info.basic_info.author || 'YouTube Creator',
         thumbnail:
