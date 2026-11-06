@@ -148,7 +148,7 @@ export async function resolveYouTubeVideo(
       const status = info.playability_status;
       if (status?.status === 'LOGIN_REQUIRED') {
         lastError = new Error(
-          'YouTube is asking for a sign-in for this video (age-restricted or bot-checked). Try another video.',
+          'YouTube requires sign-in or is blocking this server. LUNA could not download this video; please try again later.',
         );
         continue;
       }
