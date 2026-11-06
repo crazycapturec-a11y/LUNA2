@@ -129,16 +129,24 @@ export default function Home() {
         const res = await fetch(`/api/youtube/info?url=${encodeURIComponent(url)}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to fetch YouTube video.');
-        
+
         const newResult = {
           platform: 'YouTube',
           title: data.title,
           author: data.author,
           thumbnail: data.thumbnail,
-          url
+          // YouTube stream URLs are IP-bound and expire, so all downloads go through
+          // our own API, which resolves + streams the file server-side.
+          downloads: {
+            hd: `/api/youtube/download?url=${encodeURIComponent(data.url || url)}&kind=video`,
+            sd: null,
+            mp3: null,
+          },
+          url,
         };
         setResult(newResult);
         saveToHistory(newResult);
+        if (data.warning) showToast('Preview ready — the download may need a retry.');
       } else if (platform === 'Instagram') {
         const res = await fetch('/api/download', {
           method: 'POST',
@@ -147,99 +155,168 @@ export default function Home() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to fetch Instagram media.');
-        
-        const newResult = { platform: 'Instagram', title: 'Instagram Video', author: 'Instagram Creator', thumbnail: '', hdUrl: data.mediaUrl, sdUrl: data.mediaUrl, mp3Url: null, url };
+
+        const fileBase = `luna-instagram-${Date.now()}`;
+        const ext = data.extension === 'jpg' ? 'jpg' : 'mp4';
+        const downloadUrl = `/api/proxy?url=${encodeURIComponent(data.mediaUrl)}&kind=${ext === 'jpg' ? 'image' : 'video'}&filename=${fileBase}.${ext}`;
+
+        const newResult = {
+          platform: 'Instagram',
+          title: data.title || 'Instagram Video',
+          author: data.author || 'Instagram Creator',
+          thumbnail: data.thumbnail || '',
+          downloads: { hd: downloadUrl, sd: null, mp3: null },
+          isImage: ext === 'jpg',
+          url,
+        };
         setResult(newResult);
         saveToHistory(newResult);
       } else {
-        const res = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`);
+        // Metadata is resolved server-side (tikwm has no CORS headers, so the old
+        // direct browser call could preview nothing but also block every download).
+        const res = await fetch(`/api/tiktok/info?url=${encodeURIComponent(url)}`);
         const data = await res.json();
-        if (data.code !== 0 || !data.data) throw new Error('Could not extract TikTok video.');
-        
-        let hd = data.data.hdplay || data.data.play;
-        let sd = data.data.play;
-        let music = data.data.music;
-        if (hd.indexOf('//') === 0) hd = 'https:' + hd;
-        if (sd.indexOf('//') === 0) sd = 'https:' + sd;
-        if (music && music.indexOf('//') === 0) music = 'https:' + music;
+        if (!res.ok) throw new Error(data.error || 'Could not extract TikTok video.');
 
-        const newResult = { platform: 'TikTok', title: data.data.title || 'TikTok Video', author: data.data.author?.unique_id || 'TikTok User', thumbnail: data.data.cover || '', hdUrl: hd, sdUrl: sd, mp3Url: music, url };
+        const newResult = {
+          platform: 'TikTok',
+          title: data.title || 'TikTok Video',
+          author: data.author || 'TikTok User',
+          thumbnail: data.thumbnail || '',
+          downloads: {
+            hd: data.downloadUrls?.hd || null,
+            sd: data.downloadUrls?.sd || null,
+            mp3: data.downloadUrls?.mp3 || null,
+          },
+          url,
+        };
         setResult(newResult);
         saveToHistory(newResult);
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
       setShowSupport(true);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const downloadFile = async (mediaUrl: string | null, filename: string, label: string) => {
-    if (!mediaUrl) return;
-    setProgress({ show: true, label: `Preparing ${label}...`, pct: null });
+  /**
+   * Streams a file from one of our own API routes and saves it to the device.
+   *
+   * Why not just `window.open(mediaUrl)`: CDN links have no CORS headers, YouTube
+   * links are IP-bound, and a plain navigation opens a video player instead of
+   * saving a file. Our API routes reply with Content-Disposition: attachment, and
+   * we pull the bytes here so the user gets real progress + real error messages.
+   */
+  const downloadFile = async (downloadUrl: string | null, filename: string, label: string) => {
+    if (!downloadUrl) {
+      showToast(`${label} is not available for this video.`);
+      return;
+    }
+
+    if (progress.show) return; // one download at a time
+    setProgress({ show: true, label: `Preparing ${label}…`, pct: null });
+
+    const saveBlob = (blob: Blob, fallbackName: string) => {
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = fallbackName;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Revoking too early cancels the save in Safari / older Chrome.
+      setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
+    };
+
     try {
-      const proxyUrl = `/api/proxy?url=${encodeURIComponent(mediaUrl)}&filename=${filename}`;
-      const resp = await fetch(proxyUrl);
-      if (!resp.ok) throw new Error('Download failed');
-      
-      const total = +resp.headers.get('Content-Length')! || 0;
-      if (!resp.body || !resp.body.getReader) { window.location.href = proxyUrl; return; }
+      const resp = await fetch(downloadUrl);
+      const contentType = resp.headers.get('content-type') || '';
+
+      // A JSON body means the API answered with an error (expired link, 403, …).
+      if (!resp.ok || contentType.includes('application/json')) {
+        let message = 'Download failed. Please fetch the video again.';
+        try {
+          const data = await resp.json();
+          if (data?.error) message = data.error;
+        } catch {
+          /* keep the generic message */
+        }
+        throw new Error(message);
+      }
+
+      const disposition = resp.headers.get('content-disposition') || '';
+      const nameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i) || disposition.match(/filename="?([^";]+)"?/i);
+      const serverName = nameMatch ? decodeURIComponent(nameMatch[1]) : '';
+      const finalName = serverName || filename;
+
+      const total = Number(resp.headers.get('content-length')) || 0;
+
+      // Very large files are handed to the browser's own downloader so we never
+      // blow up mobile memory holding a whole video in a Blob.
+      if (total > 250 * 1024 * 1024) {
+        window.location.href = downloadUrl;
+        setProgress({ show: true, label: 'Handed to your browser — saving…', pct: 100 });
+        showToast(`${label} download started ✓`);
+        return;
+      }
+
+      if (!resp.body || !resp.body.getReader) {
+        // Ancient browser: let the attachment header do the work.
+        window.location.href = downloadUrl;
+        showToast(`${label} download started ✓`);
+        return;
+      }
 
       const reader = resp.body.getReader();
-      const chunks = [];
+      const chunks: BlobPart[] = [];
       let received = 0;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        chunks.push(value);
-        received += value.length;
-        if (total > 0) {
-          const pct = (received / total) * 100;
-          setProgress({ show: true, label: `Downloading ${label}... ${pct.toFixed(0)}%`, pct });
-        } else {
-          setProgress({ show: true, label: `Downloading ${label}...`, pct: null });
+        if (value) {
+          chunks.push(value as unknown as BlobPart);
+          received += value.length;
+          if (total > 0) {
+            const pct = Math.min(99, (received / total) * 100);
+            setProgress({ show: true, label: `Downloading ${label}… ${pct.toFixed(0)}%`, pct });
+          } else {
+            setProgress({ show: true, label: `Downloading ${label}… ${(received / 1048576).toFixed(1)} MB`, pct: null });
+          }
         }
       }
 
-      const blob = new Blob(chunks, { type: resp.headers.get('Content-Type') || 'application/octet-stream' });
-      const objUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(objUrl);
-      
+      if (received === 0) throw new Error('The video file came back empty. Try again.');
+
+      saveBlob(new Blob(chunks, { type: contentType || 'application/octet-stream' }), finalName);
+
       setProgress({ show: true, label: 'Saved ✓ Check your Downloads folder.', pct: 100 });
       showToast(`${label} download saved ✓`);
+      return;
     } catch (err) {
-      showToast('Download failed. Try again.');
+      const message = err instanceof Error ? err.message : 'Download failed. Try again.';
+      setProgress({ show: false, label: '', pct: 0 });
+      showToast(message);
+      setError(message);
+      setShowSupport(true);
     } finally {
-      setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 2600);
+      // Small delay so "Saved ✓" stays readable; errors clear earlier above.
+      setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
     }
   };
 
-  const handleYouTubeDownload = async () => {
-    if (!result || !result.url) return;
-    setProgress({ show: true, label: 'Fetching YouTube video link...', pct: null });
-    try {
-      const res = await fetch(`/api/youtube/download?url=${encodeURIComponent(result.url)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to fetch');
-      
-      // Open the direct video link in a new tab.
-      // This bypasses Vercel's proxy and 10-second timeout!
-      window.open(data.mediaUrl, '_blank');
-      
-      setProgress({ show: false, label: '', pct: 0 });
-      showToast('Download started in a new tab.');
-    } catch (err) {
-      showToast('Failed to fetch YouTube video. It might be region-locked.');
-      setProgress({ show: false, label: '', pct: 0 });
+  const startDownload = (quality: 'hd' | 'sd' | 'mp3') => {
+    if (!result?.downloads) {
+      showToast('Download link missing — fetch the video again.');
+      return;
     }
+    const label = quality === 'mp3' ? 'MP3' : quality.toUpperCase();
+    const ext = quality === 'mp3' ? 'mp3' : 'mp4';
+    const safeTitle = String(result.title || 'luna-video').replace(/[^\w-]+/g, '-').slice(0, 40) || 'luna-video';
+    downloadFile(result.downloads[quality], `luna-${safeTitle}-${quality}.${ext}`, label);
   };
 
   const prep = platform === 'Instagram' ? 'an' : 'a';
@@ -372,25 +449,38 @@ export default function Home() {
                   
                   <div className="dl-actions">
                     {result.platform === 'YouTube' ? (
-                      <button className="btn dl-btn primary" onClick={handleYouTubeDownload}>
+                      <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={progress.show}>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
                         <span className="grow"><span className="label">Download Video</span><span className="sub">Highest Quality</span></span>
                         <span className="tag">MP4</span>
                       </button>
                     ) : (
                       <>
-                        <button className="btn dl-btn primary" onClick={() => downloadFile(result.hdUrl, 'luna-hd.mp4', 'HD')}>
+                        <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={progress.show}>
                           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
-                          <span className="grow"><span className="label">Download HD</span><span className="sub">No watermark</span></span>
-                          <span className="tag">MP4</span>
+                          <span className="grow">
+                            <span className="label">
+                              {result.platform === 'Instagram'
+                                ? result.isImage ? 'Download Photo' : 'Download Video'
+                                : 'Download HD'}
+                            </span>
+                            <span className="sub">
+                              {result.platform === 'Instagram'
+                                ? result.isImage ? 'Full size' : 'Best quality'
+                                : 'No watermark'}
+                            </span>
+                          </span>
+                          <span className="tag">{result.isImage ? 'JPG' : 'MP4'}</span>
                         </button>
-                        <button className="btn dl-btn" onClick={() => downloadFile(result.sdUrl, 'luna-sd.mp4', 'SD')}>
+                        {result.downloads?.sd && (
+                        <button className="btn dl-btn" onClick={() => startDownload('sd')} disabled={progress.show}>
                           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
                           <span className="grow"><span className="label">Download SD</span><span className="sub">Smaller file</span></span>
                           <span className="tag">MP4</span>
                         </button>
-                        {result.mp3Url && (
-                          <button className="btn dl-btn" onClick={() => downloadFile(result.mp3Url, 'luna-audio.mp3', 'MP3')}>
+                        )}
+                        {result.downloads?.mp3 && (
+                          <button className="btn dl-btn" onClick={() => startDownload('mp3')} disabled={progress.show}>
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>
                             <span className="grow"><span className="label">Download MP3</span><span className="sub">Audio only</span></span>
                             <span className="tag">MP3</span>

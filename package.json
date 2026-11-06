@@ -13,7 +13,8 @@
     "next": "16.4.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "ultra-igdl": "^1.0.3"
+    "ultra-igdl": "^1.0.3",
+    "youtubei.js": "^18.3.0"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4.0.0",

@@ -34,3 +34,25 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## How downloads work (and why they used to fail)
+
+The UI could show a preview thumbnail while every download button silently did
+nothing, because the browser was being pointed straight at a third-party CDN URL:
+
+| Platform | Old behaviour | Problem | Now |
+| --- | --- | --- | --- |
+| TikTok | `fetch('https://www.tikwm.com/api/…')` in the browser | tikwm sends no CORS headers, so the request was blocked before any media URL existed | `/api/tiktok/info` resolves metadata server-side; media is relayed by `/api/proxy` |
+| Instagram | direct `cdninstagram.com` URL | CDN answers without CORS / with a different content type, so `fetch` → `Blob` failed | `/api/download` returns a normalised URL and the file is relayed by `/api/proxy` as an attachment |
+| YouTube | cobalt API + `window.open(googlevideoUrl)` | `googlevideo` URLs are IP-bound, expire, and send no CORS headers — a navigation opens a player or a 403, never a save | `youtubei.js` resolves the stream server-side and `/api/youtube/download` streams the bytes back with `Content-Disposition: attachment` |
+
+Every download request now goes through this app's own origin, streams the file
+(or falls back to a native browser save for files over 250 MB) and reports real
+progress and real errors instead of failing silently.
+
+### Optional environment variables
+
+See `.env.example`. Nothing is required to run locally, but YouTube frequently
+asks cloud/datacenter IPs for a PO token — set `YT_PO_TOKEN` (or `YT_COOKIE`) if
+YouTube downloads return HTTP 403 in production. `IG_SESSION_ID` improves
+Instagram reel/story reliability.
