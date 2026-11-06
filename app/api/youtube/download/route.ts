@@ -12,23 +12,15 @@ export async function GET(request: NextRequest) {
     const youtube = await Innertube.create();
     const info = await youtube.getInfo(videoId);
     
-    // Get the highest quality MP4 format
     const format = info.chooseFormat({ type: 'video+audio', quality: 'best' });
+    const stream = await info.download({ format: format.itag });
 
-    const stream = await info.download({
-      format: format.itag,
-    });
-
-    // Convert the ReadableStream from youtubei.js to a standard ReadableStream
     const readableStream = new ReadableStream({
       start(controller) {
         const reader = stream.getReader();
         function pump() {
           reader.read().then(({ done, value }) => {
-            if (done) {
-              controller.close();
-              return;
-            }
+            if (done) { controller.close(); return; }
             controller.enqueue(value);
             pump();
           });
@@ -45,6 +37,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: any) {
     console.error('YouTube Download Error:', error.message);
-    return NextResponse.json({ error: 'Download failed with youtubei.js.' }, { status: 500 });
+    return NextResponse.json({ error: 'Download failed.' }, { status: 500 });
   }
 }
