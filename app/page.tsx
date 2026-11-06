@@ -132,6 +132,7 @@ export default function Home() {
 
         const newResult = {
           platform: 'YouTube',
+          worker: data.worker === true,
           title: data.title,
           author: data.author,
           thumbnail: data.thumbnail,
@@ -308,9 +309,48 @@ export default function Home() {
     }
   };
 
+  const startWorkerDownload = async (videoUrl: string) => {
+    if (progress.show) return;
+    setError(null);
+    setProgress({ show: true, label: 'Preparing video and audio — this may take several minutes…', pct: null });
+    try {
+      const created = await fetch('/api/youtube/jobs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: videoUrl }),
+      });
+      const job = await created.json();
+      if (!created.ok) throw new Error(job.error || 'Could not start the download.');
+      const deadline = Date.now() + 16 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        const response = await fetch(`/api/youtube/jobs?id=${encodeURIComponent(job.id)}`, { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not check the download.');
+        if (data.status === 'failed') throw new Error(data.error || 'The download could not be prepared.');
+        if (data.status === 'ready' && data.downloadUrl) {
+          setProgress({ show: true, label: 'Ready — handing the file to your browser…', pct: 100 });
+          window.location.assign(data.downloadUrl);
+          showToast('Download handed to your browser.');
+          return;
+        }
+      }
+      throw new Error('Preparing the download took too long. Please try again.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Download failed. Please try again.';
+      setError(message);
+      setShowSupport(true);
+      showToast(message);
+    } finally {
+      setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
+    }
+  };
+
   const startDownload = (quality: 'hd' | 'sd' | 'mp3') => {
     if (!result?.downloads) {
       showToast('Download link missing — fetch the video again.');
+      return;
+    }
+    if (result.platform === 'YouTube' && result.worker && quality === 'hd') {
+      void startWorkerDownload(result.url);
       return;
     }
     const label = quality === 'mp3' ? 'MP3' : quality.toUpperCase();

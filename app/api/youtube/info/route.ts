@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchFallbackVideo } from '../../../lib/youtube-fallback';
+import { getYouTubeWorkerConfig } from '../../../lib/youtube-worker';
 import { extractVideoId, humanizeYouTubeError, resolveYouTubeVideo } from '../../../lib/youtube';
 
 export const runtime = 'nodejs';
@@ -33,11 +34,29 @@ export async function GET(request: NextRequest) {
   try {
     const res = await fetch(
       `https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`,
-      { cache: 'no-store' },
+      { cache: 'no-store', signal: AbortSignal.timeout(6000) },
     );
     if (res.ok) fallback = (await res.json()) as OEmbed;
   } catch {
     /* non-fatal */
+  }
+
+  try {
+    if (getYouTubeWorkerConfig()) {
+      // The worker verifies availability when a download is started; oEmbed is
+      // metadata only, so a preview must not be treated as a successful download.
+      return NextResponse.json({
+        success: true,
+        videoId,
+        title: fallback?.title || 'YouTube Video',
+        author: fallback?.author_name || 'YouTube Creator',
+        thumbnail: fallback?.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        url: watchUrl,
+        worker: true,
+      });
+    }
+  } catch {
+    return NextResponse.json({ error: 'The YouTube worker is not configured correctly.' }, { status: 503 });
   }
 
   try {
