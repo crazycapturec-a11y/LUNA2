@@ -1,33 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
-import ytdl from '@distube/ytdl-core';
+import { Innertube } from 'youtubei.js';
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get('url');
   if (!url) return NextResponse.json({ error: 'Missing YouTube URL' }, { status: 400 });
 
+  const videoId = new URL(url).searchParams.get('v') || url.split('youtu.be/')[1]?.split('?')[0];
+  if (!videoId) return NextResponse.json({ error: 'Invalid YouTube URL' }, { status: 400 });
+
   try {
-    const cookies = JSON.parse(process.env.YOUTUBE_COOKIES || '[]');
-    const proxyUrl = process.env.YOUTUBE_PROXY_URL;
-
-    let agent;
-    if (proxyUrl) {
-      // Use the proxy agent if the environment variable is set
-      agent = ytdl.createProxyAgent({ uri: proxyUrl }, cookies);
-    } else {
-      // Fallback to the standard cookie agent
-      agent = ytdl.createAgent(cookies);
-    }
-
-    const info = await ytdl.getInfo(url, { agent });
-    const format = ytdl.chooseFormat(ytdl.filterFormats(info.formats, 'audioandvideo'), { quality: 'highestvideo' });
+    const youtube = await Innertube.create();
+    const info = await youtube.getInfo(videoId);
     
-    const stream = ytdl(url, { format, agent });
+    // Get the highest quality MP4 format
+    const format = info.chooseFormat({ type: 'video+audio', quality: 'best' });
 
+    const stream = await info.download({
+      format: format.itag,
+    });
+
+    // Convert the ReadableStream from youtubei.js to a standard ReadableStream
     const readableStream = new ReadableStream({
       start(controller) {
-        stream.on('data', (chunk) => controller.enqueue(chunk));
-        stream.on('end', () => controller.close());
-        stream.on('error', (err) => controller.error(err));
+        const reader = stream.getReader();
+        function pump() {
+          reader.read().then(({ done, value }) => {
+            if (done) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(value);
+            pump();
+          });
+        }
+        pump();
       },
     });
 
@@ -39,6 +45,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: any) {
     console.error('YouTube Download Error:', error.message);
-    return NextResponse.json({ error: 'Download failed. Proxy or Cookies might be invalid.' }, { status: 500 });
+    return NextResponse.json({ error: 'Download failed with youtubei.js.' }, { status: 500 });
   }
 }
