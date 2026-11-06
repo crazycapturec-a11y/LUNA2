@@ -7,6 +7,7 @@ import {
   resolveYouTubeVideo,
   safeFilename,
   type ResolvedVideo,
+  type YouTubeClient,
 } from '../../../lib/youtube';
 
 export const runtime = 'nodejs';
@@ -38,17 +39,33 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: humanizeYouTubeError(error) }, { status: 502 });
   }
 
-  const extension = video.isAudio || kind === 'audio' ? 'm4a' : 'mp4';
-  const filename = `${safeFilename(video.title, 'luna-youtube')}.${extension}`;
-
   try {
     let upstream = await fetchYouTubeStream(video.streamUrl);
 
-    // The resolved URL might have rotated/expired: re-resolve once and retry.
+    // A URL can expire, or one YouTube client may be blocked while another works.
+    // First try a fresh URL, then try the remaining clients rather than returning
+    // the same cached stream repeatedly. Bound attempts to the five supported clients.
     if (!upstream.ok && [403, 404, 410].includes(upstream.status)) {
-      const fresh = await resolveYouTubeVideo(videoId, kind);
-      video = fresh;
-      upstream = await fetchYouTubeStream(fresh.streamUrl);
+      await upstream.body?.cancel();
+      try {
+        video = await resolveYouTubeVideo(videoId, kind, { refresh: true });
+        upstream = await fetchYouTubeStream(video.streamUrl);
+      } catch {
+        // Continue with other clients if refreshing the original one failed.
+      }
+    }
+
+    const rejectedClients: YouTubeClient[] = [];
+    while (!upstream.ok && [403, 404, 410].includes(upstream.status) && rejectedClients.length < 5) {
+      rejectedClients.push(video.client);
+      await upstream.body?.cancel();
+      try {
+        video = await resolveYouTubeVideo(videoId, kind, { refresh: true, excludeClients: rejectedClients });
+      } catch {
+        // No alternative could be resolved; report the last stream's HTTP error.
+        break;
+      }
+      upstream = await fetchYouTubeStream(video.streamUrl);
     }
 
     if (!upstream.ok) {
@@ -63,6 +80,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'YouTube returned an empty stream.' }, { status: 502 });
     }
 
+    const extension = video.isAudio || kind === 'audio' ? 'm4a' : 'mp4';
+    const filename = `${safeFilename(video.title, 'luna-youtube')}.${extension}`;
     const headers: Record<string, string> = {
       'Content-Type': video.mimeType || 'video/mp4',
       'Content-Disposition': contentDisposition(filename),
