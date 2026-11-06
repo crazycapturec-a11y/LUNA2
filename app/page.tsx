@@ -230,10 +230,14 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to fetch');
       
-      // Now download the direct video URL using our proxy
-      downloadFile(data.mediaUrl, 'youtube-video.mp4', 'YouTube Video');
+      // Open the direct video link in a new tab.
+      // This bypasses Vercel's proxy and 10-second timeout!
+      window.open(data.mediaUrl, '_blank');
+      
+      setProgress({ show: false, label: '', pct: 0 });
+      showToast('Download started in a new tab.');
     } catch (err) {
-      showToast('Failed to fetch YouTube video.');
+      showToast('Failed to fetch YouTube video. It might be region-locked.');
       setProgress({ show: false, label: '', pct: 0 });
     }
   };
