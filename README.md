@@ -52,7 +52,11 @@ progress and real errors instead of failing silently.
 
 ### Optional environment variables
 
-See `.env.example`. Nothing is required to run locally, but YouTube frequently
-asks cloud/datacenter IPs for a PO token — set `YT_PO_TOKEN` (or `YT_COOKIE`) if
-YouTube downloads return HTTP 403 in production. `IG_SESSION_ID` improves
-Instagram reel/story reliability.
+See `.env.example`. YouTube may require sign-in or block requests from a hosting
+provider's IP address, even for public videos. The app tries alternative clients
+and public instances, but these can also be blocked or unavailable. A preview
+alone does not guarantee that a download will work. For deployment troubleshooting,
+check the server logs and YouTube's response. The optional `YT_PO_TOKEN`,
+`YT_VISITOR_DATA`, and `YT_COOKIE` settings depend on the YouTube session and do
+not guarantee access; never share their values or commit them to the repository.
+`IG_SESSION_ID` can improve Instagram reel/story reliability.
