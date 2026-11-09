@@ -110,7 +110,7 @@ export default function Home() {
       return;
     }
 
-    const isIG = url.includes('instagram.com');
+    const isIG = url.includes('instagram.com') || url.includes('instagr.am');
     const isTT = url.includes('tiktok.com');
     const isYT = url.includes('youtube.com') || url.includes('youtu.be');
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ultraigdl } from 'ultra-igdl';
+import { instagramAuthOptions, normalizeInstagramPostUrl } from '../../lib/instagram';
 
 /**
  * ultra-igdl can leave a floating rejected promise behind when Instagram resets a
@@ -14,7 +15,8 @@ function installRejectionGuard() {
   const handler = (reason: unknown) => {
     const code = (reason as { code?: string } | null)?.code;
     if (code && ['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN'].includes(code)) return;
-    console.error('[instagram] unhandled rejection:', reason);
+    // The rejected error can contain request headers; never print it verbatim.
+    console.error('[instagram] An asynchronous extraction request failed.');
   };
   if (typeof process.on === 'function') process.on('unhandledRejection', handler);
 }
@@ -24,22 +26,6 @@ installRejectionGuard();
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
-
-const IG_URL_RE =
-  /(?:instagram\.com|instagr\.am)\/(?:reel|reels|p|tv|share)\/([A-Za-z0-9_-]+)/i;
-
-function normalizeUrl(input: string): string | null {
-  if (!IG_URL_RE.test(input)) return null;
-  try {
-    const parsed = new URL(input.trim());
-    parsed.search = '';
-    parsed.hash = '';
-    const path = parsed.pathname.replace(/\/+$/, '');
-    return `${parsed.origin}${path}/`;
-  } catch {
-    return null;
-  }
-}
 
 type MediaItem = {
   url?: string;
@@ -61,7 +47,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const url: string = typeof body?.url === 'string' ? body.url : '';
 
-    const cleanUrl = normalizeUrl(url);
+    const cleanUrl = normalizeInstagramPostUrl(url);
     if (!cleanUrl) {
       return NextResponse.json(
         { error: 'Please provide a valid Instagram reel or post link.' },
@@ -69,43 +55,41 @@ export async function POST(request: Request) {
       );
     }
 
+    let auth;
+    try {
+      auth = instagramAuthOptions();
+    } catch {
+      return NextResponse.json({ error: 'Instagram session configuration is invalid. Please contact the site administrator.' }, { status: 503 });
+    }
     const ig = new ultraigdl({
       cache: true,
       retries: 2,
       timeoutMs: 20000,
-      // Reels are served with a "session recommended" hint when logged out; the
-      // library still returns the media array, we just prefer the video entry.
-      ...(process.env.IG_SESSION_ID ? { sessionId: process.env.IG_SESSION_ID } : {}),
+      ...auth,
     });
 
-    const result = (await ig.download(cleanUrl)) as DownloadResult;
+    let result = (await ig.download(cleanUrl)) as DownloadResult;
 
     // A cold/uncached post can answer 503 + retryAfterMs while extraction continues.
+    if (result?.code !== 200 && Number(result?.retryAfterMs) > 0) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(Number(result.retryAfterMs), 8000)));
+      result = (await ig.download(cleanUrl)) as DownloadResult;
+    }
     if (result?.code !== 200) {
-      const retryAfterMs = Number(result?.retryAfterMs) || 0;
-      if (retryAfterMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, Math.min(retryAfterMs, 8000)));
-        const retried = (await ig.download(cleanUrl)) as DownloadResult;
-        if (retried?.code === 200) {
-          return buildResponse(retried, cleanUrl);
-        }
-      }
-      return NextResponse.json(
-        { error: `Instagram error: ${result?.message || 'could not read this post.'}` },
-        { status: 400 },
-      );
+      // The extractor can include network errors or request details in its message.
+      // Return only fixed messages; session cookies must never reach the browser.
+      const code = Number(result?.code);
+      if (code === 429) return NextResponse.json({ error: 'Instagram is rate-limiting requests. Please try again later.' }, { status: 429 });
+      if (code === 403) return NextResponse.json({ error: 'This Instagram post is private or unavailable.' }, { status: 403 });
+      if (code === 404) return NextResponse.json({ error: 'Instagram media was not found. The post may be unavailable or the server session may have expired.' }, { status: 404 });
+      return NextResponse.json({ error: 'Could not read this Instagram post. Please try again later.' }, { status: 502 });
     }
 
     return buildResponse(result, cleanUrl);
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Something went wrong while reading that Instagram link.',
-      },
-      { status: 500 },
+      { error: 'Something went wrong while reading that Instagram link.' },
+      { status: 502 },
     );
   }
 }

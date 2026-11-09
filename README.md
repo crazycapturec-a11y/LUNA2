@@ -59,7 +59,16 @@ alone does not guarantee that a download will work. For deployment troubleshooti
 check the server logs and YouTube's response. The optional `YT_PO_TOKEN`,
 `YT_VISITOR_DATA`, and `YT_COOKIE` settings depend on the YouTube session and do
 not guarantee access; never share their values or commit them to the repository.
-`IG_SESSION_ID` can improve Instagram reel/story reliability.
+For Instagram, set either `IG_SESSION_ID` (only the `sessionid` value) or
+`IG_COOKIES` (a complete Cookie header containing `sessionid`, and optionally
+`csrftoken` and `ds_user_id`). `IG_COOKIES` takes precedence when both are set.
+A full cookie header pasted into the older `IG_SESSION_ID` setting is also
+accepted for compatibility. Set secrets only in the hosting dashboard, never in
+chat or Git; Vercel environment changes require a new deployment. Cookies are
+account credentials and expire or can be blocked, so they do not guarantee a
+working download. A shared server session may allow visitors to request media
+visible to that account; restrict access and use an account with appropriate
+permissions rather than exposing a personal account's session publicly.
 
 An optional separately hosted YouTube worker is available as a prototype; see
 [`services/youtube-worker/README.md`](services/youtube-worker/README.md) for its
