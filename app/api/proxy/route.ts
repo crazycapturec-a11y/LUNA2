@@ -60,16 +60,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'This media host is not supported.' }, { status: 400 });
   }
 
+  const targetHost = new URL(target).hostname.toLowerCase();
+  const isInstagramHost = ['cdninstagram.com', 'fbcdn.net', 'instagram.com'].some(
+    (suffix) => targetHost === suffix || targetHost.endsWith(`.${suffix}`),
+  );
   const baseHeaders: Record<string, string> = {
     // Bare minimum headers: CDNs reject requests that impersonate the app too hard.
     'User-Agent':
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     Accept: '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
-    Referer:
-      kind === 'image' || target.includes('instagram')
-        ? 'https://www.instagram.com/'
-        : 'https://www.tiktok.com/',
+    Referer: isInstagramHost ? 'https://www.instagram.com/' : 'https://www.tiktok.com/',
   };
 
   try {

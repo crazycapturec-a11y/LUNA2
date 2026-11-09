@@ -1,0 +1,44 @@
+diff --git a/node_modules/ultra-igdl/dist/index.cjs b/node_modules/ultra-igdl/dist/index.cjs
+index 10d39f2..347ce1f 100644
+--- a/node_modules/ultra-igdl/dist/index.cjs
++++ b/node_modules/ultra-igdl/dist/index.cjs
+@@ -1101,7 +1101,7 @@ var HttpClient = class {
+     const promise = this.fetchWithCookieInternal(url, cookie);
+     if (dedupe) {
+       inFlightCookie.set(key, promise);
+-      promise.finally(() => inFlightCookie.delete(key));
++      void promise.then(() => inFlightCookie.delete(key), () => inFlightCookie.delete(key));
+     }
+     return promise;
+   }
+@@ -1132,7 +1132,7 @@ var HttpClient = class {
+     const promise = this.fetchInternal(url);
+     if (dedupe) {
+       inFlight.set(url, promise);
+-      promise.finally(() => inFlight.delete(url));
++      void promise.then(() => inFlight.delete(url), () => inFlight.delete(url));
+     }
+     return promise;
+   }
+diff --git a/node_modules/ultra-igdl/dist/index.js b/node_modules/ultra-igdl/dist/index.js
+index 7863200..f102187 100644
+--- a/node_modules/ultra-igdl/dist/index.js
++++ b/node_modules/ultra-igdl/dist/index.js
+@@ -1068,7 +1068,7 @@ var HttpClient = class {
+     const promise = this.fetchWithCookieInternal(url, cookie);
+     if (dedupe) {
+       inFlightCookie.set(key, promise);
+-      promise.finally(() => inFlightCookie.delete(key));
++      void promise.then(() => inFlightCookie.delete(key), () => inFlightCookie.delete(key));
+     }
+     return promise;
+   }
+@@ -1099,7 +1099,7 @@ var HttpClient = class {
+     const promise = this.fetchInternal(url);
+     if (dedupe) {
+       inFlight.set(url, promise);
+-      promise.finally(() => inFlight.delete(url));
++      void promise.then(() => inFlight.delete(url), () => inFlight.delete(url));
+     }
+     return promise;
+   }

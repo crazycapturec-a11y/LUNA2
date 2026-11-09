@@ -1,71 +1,124 @@
 import { NextResponse } from 'next/server';
+import { ultraigdl } from 'ultra-igdl';
+import { instagramAuthOptions, normalizeInstagramPostUrl } from '../../lib/instagram';
+import { fetchSnapInsta } from '../../lib/instagram-fallback';
+import { withInstagramDeadline } from '../../lib/instagram-deadline';
+
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
+
+type MediaItem = {
+  url?: string;
+  type?: string;
+  thumbnail?: string;
+};
+
+type DownloadResult = {
+  code?: number;
+  message?: string;
+  retryAfterMs?: number;
+  media?: MediaItem[];
+  caption?: string;
+  username?: string;
+};
 
 export async function POST(request: Request) {
   try {
-    const { url } = await request.json();
+    const body = await request.json().catch(() => ({}));
+    const url: string = typeof body?.url === 'string' ? body.url : '';
 
-    if (!url || !url.includes('instagram.com')) {
-      return NextResponse.json({ error: 'Please provide a valid Instagram link.' }, { status: 400 });
+    const cleanUrl = normalizeInstagramPostUrl(url);
+    if (!cleanUrl) {
+      return NextResponse.json(
+        { error: 'Please provide a valid Instagram reel or post link.' },
+        { status: 400 },
+      );
     }
 
-    // Clean the URL to remove tracking parameters like ?srtk=...
-    let cleanUrl = url.split('?')[0];
-    if (!cleanUrl.endsWith('/')) {
-      cleanUrl += '/';
+    let auth;
+    try {
+      auth = instagramAuthOptions();
+    } catch {
+      return NextResponse.json({ error: 'Instagram session configuration is invalid. Please contact the site administrator.' }, { status: 503 });
     }
-
-    // We use the SnapInsta API which handles Instagram's authentication behind the scenes
-    const apiUrl = 'https://www.snapinsta.app/api/ajaxSearch';
-    const body = new URLSearchParams({
-      q: cleanUrl,
-      t: 'media',
-      lang: 'en'
+    const ig = new ultraigdl({
+      cache: true,
+      retries: 2,
+      timeoutMs: 20000,
+      ...auth,
     });
 
-    const res = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Origin': 'https://www.snapinsta.app',
-        'Referer': 'https://www.snapinsta.app/'
-      },
-      body: body.toString()
-    });
-
-    const data = await res.json();
-
-    if (data.status !== 'ok' || !data.data) {
-      throw new Error('Could not extract media. The account might be private or the link is invalid.');
+    let result: DownloadResult;
+    try {
+      // Leave time for the fallback within the 60-second function limit, even
+      // when the extractor makes several network requests or retries.
+      result = await withInstagramDeadline((async () => {
+        let extracted = (await ig.download(cleanUrl)) as DownloadResult;
+        // A cold/uncached post can answer 503 + retryAfterMs while extraction continues.
+        if (extracted?.code !== 200 && Number(extracted?.retryAfterMs) > 0) {
+          await new Promise((resolve) => setTimeout(resolve, Math.min(Number(extracted.retryAfterMs), 8000)));
+          extracted = (await ig.download(cleanUrl)) as DownloadResult;
+        }
+        return extracted;
+      })(), 42000);
+    } catch {
+      result = { code: 502 };
+    }
+    if (result?.code !== 200) {
+      // Keep the existing SnapInsta integration only for unauthenticated requests.
+      // Never transmit an Instagram session to the third-party service.
+      if (!auth.cookies && !auth.sessionId && ![403, 429].includes(Number(result?.code))) {
+        const fallback = await fetchSnapInsta(cleanUrl);
+        if (fallback) return buildResponse({ code: 200, media: [fallback] }, cleanUrl);
+      }
+      // The extractor can include network errors or request details in its message.
+      // Return only fixed messages; session cookies must never reach the browser.
+      const code = Number(result?.code);
+      if (code === 429) return NextResponse.json({ error: 'Instagram is rate-limiting requests. Please try again later.' }, { status: 429 });
+      if (code === 403) return NextResponse.json({ error: 'This Instagram post is private or unavailable.' }, { status: 403 });
+      if (code === 404) return NextResponse.json({ error: 'Instagram media was not found. The post may be unavailable or the server session may have expired.' }, { status: 404 });
+      return NextResponse.json({ error: 'Could not read this Instagram post. Please try again later.' }, { status: 502 });
     }
 
-    // The API returns HTML. We need to extract the download link from it.
-    const html = data.data;
-    
-    // Look for an MP4 video link
-    const mp4Match = html.match(/href="([^"]+\.mp4[^"]*)"/);
-    if (mp4Match && mp4Match[1]) {
-      return NextResponse.json({
-        success: true,
-        mediaUrl: mp4Match[1],
-        mediaType: 'video',
-      });
-    }
-
-    // If no video, look for a JPG image link (for photo posts)
-    const imgMatch = html.match(/href="([^"]+\.jpg[^"]*)"/);
-    if (imgMatch && imgMatch[1]) {
-       return NextResponse.json({
-        success: true,
-        mediaUrl: imgMatch[1],
-        mediaType: 'image',
-      });
-    }
-
-    throw new Error('Could not find a downloadable file.');
-
-  } catch (error: any) {
-    console.error("SERVER ERROR:", error);
-    return NextResponse.json({ error: error.message || 'Something went wrong on the server.' }, { status: 500 });
+    return buildResponse(result, cleanUrl);
+  } catch {
+    return NextResponse.json(
+      { error: 'Something went wrong while reading that Instagram link.' },
+      { status: 502 },
+    );
   }
+}
+
+function buildResponse(result: DownloadResult, url: string) {
+  const media: MediaItem[] = Array.isArray(result?.media) ? result.media : [];
+
+  // Prefer a video entry (reels), otherwise fall back to whatever exists (photo post).
+  const video = media.find((item) => item?.type === 'video' && item?.url) ||
+    media.find((item) => typeof item?.url === 'string' && /\.mp4/i.test(item.url));
+  const chosen = video || media.find((item) => item?.url);
+
+  if (!chosen?.url) {
+    return NextResponse.json(
+      { error: 'No downloadable media was found for this Instagram link.' },
+      { status: 404 },
+    );
+  }
+
+  const type = chosen.type || (video ? 'video' : 'image');
+  const thumbnail =
+    chosen.thumbnail || (chosen.type === 'image' ? chosen.url : '') || '';
+
+  return NextResponse.json({
+    success: true,
+    mediaUrl: chosen.url,
+    mediaType: type,
+    thumbnail,
+    title: result?.caption?.slice(0, 120) || 'Instagram Video',
+    author: result?.username || 'Instagram Creator',
+    extension: type === 'video' ? 'mp4' : 'jpg',
+    // Everything is streamed via our own proxy so the browser always receives a file.
+    downloadUrl: `/api/proxy?url=${encodeURIComponent(chosen.url)}&kind=${type === 'video' ? 'video' : 'image'}`,
+    url,
+  });
 }
