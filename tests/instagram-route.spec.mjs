@@ -27,21 +27,23 @@ test('passes configured cookies to the extractor and does not expose errors or s
     return response;
   });
 
-  const success = await POST(request('https://www.instagram.com/reel/ABC_123/?igsh=tracking'));
+  const success = await POST(request('https://www.instagram.com/reel/Dfe3hqehJsE/?srtk=emVscXE5d2N3NnZt'));
   assert.equal(success.status, 200);
   assert.equal(seenOptions.cookies, process.env.IG_COOKIES);
   assert.equal(seenOptions.sessionId, undefined);
-  assert.equal(seenUrl, 'https://www.instagram.com/reel/ABC_123/');
+  assert.equal(seenUrl, 'https://www.instagram.com/reel/Dfe3hqehJsE/');
   assert.equal((await success.json()).mediaType, 'video');
 
   const calls = mock.mock.callCount();
   assert.equal((await POST(request('https://evil.example/instagram.com/reel/ABC_123/'))).status, 400);
   assert.equal(mock.mock.callCount(), calls);
 
+  const fallbackFetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('fallback should not run with cookies'); });
   response = { code: 500, message: `failed with ${process.env.IG_COOKIES}` };
   const failed = await POST(request('https://www.instagram.com/reel/ABC_123/'));
   assert.equal(failed.status, 502);
   assert.ok(!(await failed.text()).includes('fake-secret'));
+  assert.equal(fallbackFetch.mock.callCount(), 0);
 
   process.env.IG_COOKIES = 'no-sessionid=unsafe';
   const invalid = await POST(request('https://www.instagram.com/reel/ABC_123/'));
