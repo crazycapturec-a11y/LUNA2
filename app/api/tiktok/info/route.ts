@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { fetchDirectTikTok, normalizeTikTokUrl } from '../../../lib/tiktok-direct';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -41,8 +42,8 @@ export async function GET(request: NextRequest) {
   const raw = request.nextUrl.searchParams.get('url');
   if (!raw) return NextResponse.json({ error: 'Missing URL' }, { status: 400 });
 
-  const videoUrl = raw.trim();
-  if (!/(^|\.)tiktok\.com\//i.test(videoUrl) && !/vt\.tiktok\.com/i.test(videoUrl)) {
+  const videoUrl = normalizeTikTokUrl(raw);
+  if (!videoUrl) {
     return NextResponse.json({ error: 'That does not look like a TikTok link.' }, { status: 400 });
   }
 
@@ -57,6 +58,8 @@ export async function GET(request: NextRequest) {
     try {
       const res = await fetch(endpoint, {
         cache: 'no-store',
+        signal: AbortSignal.timeout(8000),
+        redirect: 'manual',
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -72,7 +75,7 @@ export async function GET(request: NextRequest) {
 
       const payload = (await res.json()) as TikwmResponse;
       if (payload?.code !== 0 || !payload?.data) {
-        lastError = payload?.msg || 'Could not extract this TikTok video.';
+        lastError = 'Could not extract this TikTok video from the lookup service.';
         continue;
       }
 
@@ -109,14 +112,34 @@ export async function GET(request: NextRequest) {
         },
         url: videoUrl,
       });
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : lastError;
+    } catch {
+      lastError = 'Could not reach the TikTok lookup service.';
     }
   }
 
-  if (/fetch failed|network|ENOTFOUND|ECONNRESET|ETIMEDOUT|socket/i.test(lastError)) {
-    lastError = 'Could not reach the TikTok lookup service. Please try again in a moment.';
+  // TikWM can reject hosting-provider IPs. Try TikTok's page directly without
+  // credentials; a successful lookup does not guarantee the CDN will stream.
+  const direct = await fetchDirectTikTok(videoUrl);
+  if (direct) {
+    const filenameBase = `luna-tiktok-${direct.id}`;
+    return NextResponse.json({
+      success: true,
+      id: direct.id,
+      title: direct.title,
+      author: direct.author,
+      thumbnail: direct.thumbnail,
+      duration: direct.duration,
+      hdUrl: direct.hd,
+      sdUrl: direct.sd,
+      mp3Url: direct.music || null,
+      downloadUrls: {
+        hd: `/api/proxy?url=${encodeURIComponent(direct.hd)}&kind=video&filename=${filenameBase}-hd.mp4`,
+        sd: `/api/proxy?url=${encodeURIComponent(direct.sd)}&kind=video&filename=${filenameBase}-sd.mp4`,
+        mp3: direct.music ? `/api/proxy?url=${encodeURIComponent(direct.music)}&kind=audio&filename=${filenameBase}.mp3` : null,
+      },
+      url: videoUrl,
+    });
   }
 
-  return NextResponse.json({ error: lastError }, { status: 502 });
+  return NextResponse.json({ error: `${lastError} TikTok's direct lookup was also unavailable.` }, { status: 502 });
 }

@@ -48,7 +48,10 @@ nothing, because the browser was being pointed straight at a third-party CDN URL
 
 Every download request now goes through this app's own origin, streams the file
 (or falls back to a native browser save for files over 250 MB) and reports real
-progress and real errors instead of failing silently.
+progress and real errors instead of failing silently. TikTok links are sent to
+TikWM for lookup; if it fails, LUNA also attempts to read the public TikTok page
+without credentials. Either service may block the hosting server or return media
+that cannot be downloaded, so the fallback is not guaranteed to work.
 
 ### Optional environment variables
 
