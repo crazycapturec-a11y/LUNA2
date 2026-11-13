@@ -3,6 +3,8 @@ import { ultraigdl } from 'ultra-igdl';
 import { instagramAuthOptions, normalizeInstagramPostUrl } from '../../lib/instagram';
 import { fetchSnapInsta } from '../../lib/instagram-fallback';
 import { withInstagramDeadline } from '../../lib/instagram-deadline';
+import { fetchInstagramEmbed, instagramMediaUrl } from '../../lib/instagram-embed';
+import { resolveInstagramShareUrl } from '../../lib/instagram-share';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -28,12 +30,18 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const url: string = typeof body?.url === 'string' ? body.url : '';
 
-    const cleanUrl = normalizeInstagramPostUrl(url);
+    let cleanUrl = normalizeInstagramPostUrl(url);
     if (!cleanUrl) {
       return NextResponse.json(
         { error: 'Please provide a valid Instagram reel or post link.' },
         { status: 400 },
       );
+    }
+
+    if (new URL(cleanUrl).pathname.toLowerCase().startsWith('/share/')) {
+      const resolved = await resolveInstagramShareUrl(cleanUrl);
+      if (!resolved) return NextResponse.json({ error: 'Could not open this Instagram share link. Try copying the direct post or reel link.' }, { status: 502 });
+      cleanUrl = resolved;
     }
 
     let auth;
@@ -65,23 +73,31 @@ export async function POST(request: Request) {
     } catch {
       result = { code: 502 };
     }
-    if (result?.code !== 200) {
-      // Keep the existing SnapInsta integration only for unauthenticated requests.
-      // Never transmit an Instagram session to the third-party service.
-      if (!auth.cookies && !auth.sessionId && ![403, 429].includes(Number(result?.code))) {
-        const fallback = await fetchSnapInsta(cleanUrl);
-        if (fallback) return buildResponse({ code: 200, media: [fallback] }, cleanUrl);
-      }
-      // The extractor can include network errors or request details in its message.
-      // Return only fixed messages; session cookies must never reach the browser.
-      const code = Number(result?.code);
-      if (code === 429) return NextResponse.json({ error: 'Instagram is rate-limiting requests. Please try again later.' }, { status: 429 });
-      if (code === 403) return NextResponse.json({ error: 'This Instagram post is private or unavailable.' }, { status: 403 });
-      if (code === 404) return NextResponse.json({ error: 'Instagram media was not found. The post may be unavailable or the server session may have expired.' }, { status: 404 });
-      return NextResponse.json({ error: 'Could not read this Instagram post. Please try again later.' }, { status: 502 });
-    }
+    const primary = result?.code === 200 ? buildResponse(result, cleanUrl) : null;
+    if (primary?.status === 200) return primary;
 
-    return buildResponse(result, cleanUrl);
+    const code = Number(result?.code);
+    if (![403, 429].includes(code)) {
+      // An Instagram page 404 can make ultra-igdl return before trying an embed.
+      // This separate public request goes only to Instagram, without credentials.
+      const embedded = await fetchInstagramEmbed(cleanUrl);
+      if (embedded) return buildResponse({ code: 200, media: [embedded] }, cleanUrl);
+
+      // Never transmit an Instagram session to the third-party service, or send
+      // the post link there when the server has a shared Instagram session.
+      if (!auth.cookies && !auth.sessionId) {
+        const fallback = await fetchSnapInsta(cleanUrl);
+        if (fallback) {
+          const response = buildResponse({ code: 200, media: [fallback] }, cleanUrl);
+          if (response.status === 200) return response;
+        }
+      }
+    }
+    // Do not expose raw provider/network errors or credential values.
+    if (code === 429) return NextResponse.json({ error: 'Instagram is rate-limiting requests. Please try again later.' }, { status: 429 });
+    if (code === 403) return NextResponse.json({ error: 'This Instagram post is private or unavailable.' }, { status: 403 });
+    if (code === 404 || primary) return NextResponse.json({ error: 'Instagram media was not found. The post may be unavailable or the server session may have expired.' }, { status: 404 });
+    return NextResponse.json({ error: 'Could not read this Instagram post. Please try again later.' }, { status: 502 });
   } catch {
     return NextResponse.json(
       { error: 'Something went wrong while reading that Instagram link.' },
@@ -91,12 +107,14 @@ export async function POST(request: Request) {
 }
 
 function buildResponse(result: DownloadResult, url: string) {
-  const media: MediaItem[] = Array.isArray(result?.media) ? result.media : [];
+  const media: MediaItem[] = (Array.isArray(result?.media) ? result.media : [])
+    .filter((item) => instagramMediaUrl(item?.url));
 
-  // Prefer a video entry (reels), otherwise fall back to whatever exists (photo post).
+  // A reel or TV video must not silently turn into a thumbnail/photo download.
+  const videoOnly = /^\/(?:reel|tv)\//i.test(new URL(url).pathname);
   const video = media.find((item) => item?.type === 'video' && item?.url) ||
-    media.find((item) => typeof item?.url === 'string' && /\.mp4/i.test(item.url));
-  const chosen = video || media.find((item) => item?.url);
+    media.find((item) => item?.type !== 'image' && typeof item?.url === 'string' && /\.mp4(?:[?#]|$)/i.test(item.url));
+  const chosen = video || (!videoOnly ? media.find((item) => item?.type === 'image' && item?.url) : undefined);
 
   if (!chosen?.url) {
     return NextResponse.json(
@@ -106,8 +124,7 @@ function buildResponse(result: DownloadResult, url: string) {
   }
 
   const type = chosen.type || (video ? 'video' : 'image');
-  const thumbnail =
-    chosen.thumbnail || (chosen.type === 'image' ? chosen.url : '') || '';
+  const thumbnail = instagramMediaUrl(chosen.thumbnail) || (type === 'image' ? chosen.url : '') || '';
 
   return NextResponse.json({
     success: true,
