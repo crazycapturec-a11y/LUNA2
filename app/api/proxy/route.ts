@@ -32,12 +32,26 @@ const ALLOWED_HOST_SUFFIXES = [
 function isAllowed(raw: string): boolean {
   try {
     const parsed = new URL(raw);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username || parsed.password || parsed.port) return false;
     const host = parsed.hostname.toLowerCase();
     return ALLOWED_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
   } catch {
     return false;
   }
+}
+
+async function fetchAllowedMedia(target: string, headers: Record<string, string>): Promise<Response> {
+  let current = target;
+  for (let redirects = 0; redirects <= 4; redirects++) {
+    if (!isAllowed(current)) throw new Error('Unsupported media redirect');
+    const response = await fetch(current, { method: 'GET', redirect: 'manual', cache: 'no-store', headers });
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get('location');
+    await response.body?.cancel();
+    if (!location || redirects === 4) throw new Error('Invalid media redirect');
+    current = new URL(location, current).href;
+  }
+  throw new Error('Too many media redirects');
 }
 
 function extensionFor(kind: string, contentType: string): string {
@@ -64,31 +78,23 @@ export async function GET(request: NextRequest) {
   const isInstagramHost = ['cdninstagram.com', 'fbcdn.net', 'instagram.com'].some(
     (suffix) => targetHost === suffix || targetHost.endsWith(`.${suffix}`),
   );
+  const isTikwmHost = targetHost === 'tikwm.com' || targetHost.endsWith('.tikwm.com');
   const baseHeaders: Record<string, string> = {
     // Bare minimum headers: CDNs reject requests that impersonate the app too hard.
     'User-Agent':
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     Accept: '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
-    Referer: isInstagramHost ? 'https://www.instagram.com/' : 'https://www.tiktok.com/',
+    Referer: isInstagramHost ? 'https://www.instagram.com/' : isTikwmHost ? 'https://www.tikwm.com/' : 'https://www.tiktok.com/',
   };
 
   try {
-    let upstream = await fetch(target, {
-      method: 'GET',
-      redirect: 'follow',
-      cache: 'no-store',
-      headers: baseHeaders,
-    });
+    let upstream = await fetchAllowedMedia(target, baseHeaders);
 
     // Some TikTok CDN edges answer 403 unless a byte range is requested.
     if ([401, 403, 451].includes(upstream.status)) {
-      upstream = await fetch(target, {
-        method: 'GET',
-        redirect: 'follow',
-        cache: 'no-store',
-        headers: { ...baseHeaders, Range: 'bytes=0-' },
-      });
+      await upstream.body?.cancel();
+      upstream = await fetchAllowedMedia(target, { ...baseHeaders, Range: 'bytes=0-' });
     }
 
     if (!upstream.ok || !upstream.body) {
