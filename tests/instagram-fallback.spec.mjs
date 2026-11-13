@@ -20,6 +20,7 @@ test('uses SnapInsta only as an unauthenticated fallback and parses safe media U
   delete process.env.IG_SESSION_ID;
   t.mock.method(ultraigdl.prototype, 'download', async () => ({ code: 404, message: 'not found' }));
   const snap = t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url === 'https://www.instagram.com/reel/Dfe3hqehJsE/embed/') return new Response('', { status: 404 });
     assert.equal(url, 'https://www.snapinsta.app/api/ajaxSearch');
     assert.equal(options.headers.Cookie, undefined);
     assert.equal(options.headers.cookie, undefined);
@@ -32,7 +33,7 @@ test('uses SnapInsta only as an unauthenticated fallback and parses safe media U
   assert.equal(body.mediaUrl, 'https://cdninstagram.com/reel.mp4?a=1&b=2');
   assert.equal(body.mediaType, 'video');
   assert.equal(body.extension, 'mp4');
-  assert.equal(snap.mock.callCount(), 1);
+  assert.equal(snap.mock.callCount(), 2);
 });
 
 test('returns a safe error when both providers fail', async (t) => {

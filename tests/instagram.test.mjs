@@ -26,6 +26,7 @@ test('rejects malformed credentials without exposing their values', () => {
 test('normalizes real Instagram hosts and rejects deceptive hosts or userinfo', () => {
   assert.equal(normalizeInstagramPostUrl('https://www.instagram.com/reel/ABC_def/?igsh=123'), 'https://www.instagram.com/reel/ABC_def/');
   assert.equal(normalizeInstagramPostUrl('https://instagr.am/p/ABC123/?utm_source=ig'), 'https://www.instagram.com/p/ABC123/');
+  assert.equal(normalizeInstagramPostUrl('https://www.instagram.com/reels/ABC123/?igsh=tracking'), 'https://www.instagram.com/reel/ABC123/');
   assert.equal(normalizeInstagramPostUrl('https://evil.example/instagram.com/reel/ABC/'), null);
   assert.equal(normalizeInstagramPostUrl('https://instagram.com.evil.example/reel/ABC/'), null);
   assert.equal(normalizeInstagramPostUrl('https://www.instagram.com@evil.example/reel/ABC/'), null);

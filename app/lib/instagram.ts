@@ -32,8 +32,10 @@ export function normalizeInstagramPostUrl(input: string): string | null {
     const parsed = new URL(input.trim());
     const hosts = ['instagram.com', 'www.instagram.com', 'm.instagram.com', 'instagr.am', 'www.instagr.am'];
     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.port || !hosts.includes(parsed.hostname.toLowerCase())) return null;
-    const path = parsed.pathname.replace(/\/+$/, '');
+    let path = parsed.pathname.replace(/\/+$/, '');
     if (!/^\/(?:reel|reels|p|tv|share)\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?$/i.test(path)) return null;
+    // ultra-igdl accepts /reel/ but not Instagram's /reels/ spelling.
+    path = path.replace(/^\/reels\//i, '/reel/');
     return `https://www.instagram.com${path}/`;
   } catch {
     return null;
