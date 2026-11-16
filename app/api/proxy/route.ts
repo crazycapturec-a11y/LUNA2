@@ -46,7 +46,7 @@ async function fetchAllowedMedia(target: string, headers: Record<string, string>
   let current = target;
   for (let redirects = 0; redirects <= 4; redirects++) {
     if (!isAllowed(current)) throw new Error('Unsupported media redirect');
-    const response = await fetch(current, { method: 'GET', redirect: 'manual', cache: 'no-store', headers });
+    const response = await fetch(current, { method: 'GET', redirect: 'manual', cache: 'no-store', headers, signal: AbortSignal.timeout(30000) });
     if (response.status < 300 || response.status >= 400) return response;
     const location = response.headers.get('location');
     await response.body?.cancel();
