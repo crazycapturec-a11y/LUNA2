@@ -343,7 +343,52 @@ export default function Home() {
       showToast(`${label} download started ✓`);
       return;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Download failed. Try again.';
+      const raw = err instanceof Error ? err.message : 'Download failed. Try again.';
+      if (/403|media source/i.test(raw)) {
+        try {
+          const original = new URL(downloadUrl, window.location.origin).searchParams.get('url');
+          if (original) {
+            const host = new URL(original).hostname.toLowerCase();
+            const allowed = ['tiktokcdn.com','tiktokcdn-us.com','tiktokcdn-eu.com','tiktokv.com','tiktokv.us','tiktok.com','tikwm.com','byteoversea.com','ibytedtos.com','muscdn.com','musical.ly','cdninstagram.com','fbcdn.net','instagram.com'].some(s => host === s || host.endsWith('.'+s));
+            if (allowed) {
+              showToast('Server blocked — trying alternate download…');
+              setProgress({ show: true, label: `Downloading ${label}…`, pct: null });
+              const corsUrl = `https://corsproxy.io/?${encodeURIComponent(original)}`;
+              const corsResp = await fetch(corsUrl, { signal: AbortSignal.timeout(30000) });
+              if (corsResp.ok && corsResp.body) {
+                const cLen = Number(corsResp.headers.get('content-length')) || 0;
+                const cReader = corsResp.body.getReader();
+                const cChunks: BlobPart[] = [];
+                let cReceived = 0;
+                while (true) {
+                  const { done, value } = await cReader.read();
+                  if (done) break;
+                  if (value) {
+                    cChunks.push(value as unknown as BlobPart);
+                    cReceived += value.length;
+                    if (cLen > 0) {
+                      const pct = Math.min(99, (cReceived / cLen) * 100);
+                      setProgress({ show: true, label: `Downloading ${label}… ${pct.toFixed(0)}%`, pct });
+                    } else {
+                      setProgress({ show: true, label: `Downloading ${label}… ${(cReceived / 1048576).toFixed(1)} MB`, pct: null });
+                    }
+                  }
+                }
+                if (cReceived > 0) {
+                  const cType = corsResp.headers.get('content-type') || 'video/mp4';
+                  const cName = filename.includes('.') ? filename : `${filename}.${label === 'MP3' ? 'mp3' : 'mp4'}`;
+                  saveBlob(new Blob(cChunks, { type: cType }), cName);
+                  setProgress({ show: true, label: 'Download started — check your Downloads folder.', pct: 100 });
+                  showToast(`${label} download started ✓`);
+                  setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
+                  return;
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+      const message = raw;
       setProgress({ show: false, label: '', pct: 0 });
       showToast(message);
       setError(message);
