@@ -283,8 +283,12 @@ export async function GET(request: NextRequest) {
       headers['Content-Security-Policy'] = "default-src 'none'";
     }
 
-    const length = upstream.headers.get('content-length');
-    if (length) headers['Content-Length'] = length;
+    // A 206 body is one slice of the file and we relabel the response 200, so its
+    // length must not be forwarded or the browser saves a short file as complete.
+    if (upstream.status !== 206) {
+      const length = upstream.headers.get('content-length');
+      if (length) headers['Content-Length'] = length;
+    }
     const acceptRanges = upstream.headers.get('accept-ranges');
     if (acceptRanges) headers['Accept-Ranges'] = acceptRanges;
 
