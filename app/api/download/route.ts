@@ -16,6 +16,20 @@ type MediaItem = {
   thumbnail?: string;
 };
 
+type TikwmPayload = {
+  code?: number;
+  data?: {
+    id?: string;
+    title?: string;
+    cover?: string;
+    origin_cover?: string;
+    play?: string;
+    hdplay?: string;
+    music?: string;
+    author?: { unique_id?: string; nickname?: string };
+  };
+};
+
 type DownloadResult = {
   code?: number;
   message?: string;
@@ -54,7 +68,7 @@ export async function POST(request: Request) {
             Referer: 'https://www.tikwm.com/',
           },
         });
-        const data: any = await res.json().catch(() => null);
+        const data = (await res.json().catch(() => null)) as TikwmPayload | null;
         if (data?.code === 0 && data?.data) {
           let hd = data.data.hdplay || data.data.play;
           let music = data.data.music;
