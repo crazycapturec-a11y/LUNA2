@@ -24,6 +24,8 @@ const ALLOWED_HOST_SUFFIXES = [
   'tikwm.com',
   'byteoversea.com',
   'ibytedtos.com',
+  'muscdn.com',
+  'musical.ly',
   'cdninstagram.com',
   'fbcdn.net',
   'instagram.com',
@@ -89,10 +91,15 @@ export async function GET(request: NextRequest) {
     (suffix) => targetHost === suffix || targetHost.endsWith(`.${suffix}`),
   );
   const isTikwmHost = targetHost === 'tikwm.com' || targetHost.endsWith('.tikwm.com');
+  const isTikTokHost =
+    ['tiktokcdn.com', 'tiktokcdn-us.com', 'tiktokcdn-eu.com', 'tiktokv.com', 'tiktokv.us', 'tiktok.com', 'byteoversea.com', 'ibytedtos.com', 'muscdn.com', 'musical.ly'].some(
+      (suffix) => targetHost === suffix || targetHost.endsWith(`.${suffix}`),
+    ) && !isTikwmHost;
+
   const baseHeaders: Record<string, string> = {
-    // Bare minimum headers: CDNs reject requests that impersonate the app too hard.
+    // Use a current Chrome UA like cobalt to avoid CDN bot checks
     'User-Agent':
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
     Accept: inlineImage ? 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' : '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
     Referer: isInstagramHost ? 'https://www.instagram.com/' : isTikwmHost ? 'https://www.tikwm.com/' : 'https://www.tiktok.com/',
@@ -101,10 +108,52 @@ export async function GET(request: NextRequest) {
   try {
     let upstream = await fetchAllowedMedia(target, baseHeaders);
 
-    // Some CDN edges answer 403 unless a byte range is requested.
+    // TikTok's CDN often 403s on datacenter IPs. Try a few header variations
+    // before giving up — Range request, mobile UA, and Origin as seen in cobalt.
     if ([401, 403, 451].includes(upstream.status)) {
-      await upstream.body?.cancel();
-      upstream = await fetchAllowedMedia(target, { ...baseHeaders, Range: 'bytes=0-' });
+      await upstream.body?.cancel().catch(() => {});
+      const attempts: Record<string, string>[] = [];
+
+      if (isTikTokHost) {
+        const mobileUA =
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+        attempts.push(
+          { ...baseHeaders, Range: 'bytes=0-' },
+          { ...baseHeaders, 'User-Agent': mobileUA },
+          { ...baseHeaders, 'User-Agent': mobileUA, Range: 'bytes=0-' },
+          { ...baseHeaders, Origin: 'https://www.tiktok.com' },
+          { ...baseHeaders, Origin: 'https://www.tiktok.com', Range: 'bytes=0-' },
+          // Some edges want a tiktok web cookie hint
+          { ...baseHeaders, Referer: 'https://m.tiktok.com/' },
+        );
+      } else {
+        // For Instagram / tikwm just try Range once
+        attempts.push({ ...baseHeaders, Range: 'bytes=0-' });
+      }
+
+      let found: Response | null = null;
+      for (const h of attempts) {
+        try {
+          const res = await fetchAllowedMedia(target, h);
+          if (![401, 403, 451].includes(res.status)) {
+            found = res;
+            break;
+          }
+          await res.body?.cancel().catch(() => {});
+        } catch {
+          // try next
+        }
+      }
+      if (found) upstream = found;
+      else {
+        // Keep the original 403 to report, but try one final Range fetch for
+        // callers that check the body anyway (preserve old behaviour)
+        try {
+          upstream = await fetchAllowedMedia(target, { ...baseHeaders, Range: 'bytes=0-' });
+        } catch {
+          // keep original
+        }
+      }
     }
 
     if (!upstream.ok || !upstream.body) {
