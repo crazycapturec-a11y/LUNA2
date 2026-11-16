@@ -389,9 +389,43 @@ export default function Home() {
                   }
                 }
               } catch {}
-              // Direct fetch failed (often CORS) — open in new tab as last resort.
-              // The video will play; user can long-press to Save.
-              showToast('Direct download blocked — opening video (long-press to save)…');
+              // Try a public CORS proxy (adds CORS headers) before giving up to window.open
+              try {
+                showToast('Direct blocked — trying alternate route…');
+                const corsUrl = `https://corsproxy.io/?${encodeURIComponent(original)}`;
+                const corsResp = await fetch(corsUrl, { signal: AbortSignal.timeout(30000) });
+                if (corsResp.ok && corsResp.body) {
+                  const cLen = Number(corsResp.headers.get('content-length')) || 0;
+                  const cReader = corsResp.body.getReader();
+                  const cChunks: BlobPart[] = [];
+                  let cReceived = 0;
+                  while (true) {
+                    const { done, value } = await cReader.read();
+                    if (done) break;
+                    if (value) {
+                      cChunks.push(value as unknown as BlobPart);
+                      cReceived += value.length;
+                      if (cLen > 0) {
+                        const pct = Math.min(99, (cReceived / cLen) * 100);
+                        setProgress({ show: true, label: `Downloading ${label}… ${pct.toFixed(0)}%`, pct });
+                      } else {
+                        setProgress({ show: true, label: `Downloading ${label}… ${(cReceived / 1048576).toFixed(1)} MB`, pct: null });
+                      }
+                    }
+                  }
+                  if (cReceived > 0) {
+                    const cType = corsResp.headers.get('content-type') || 'video/mp4';
+                    const cName = filename.includes('.') ? filename : `${filename}.${label === 'MP3' ? 'mp3' : 'mp4'}`;
+                    saveBlob(new Blob(cChunks, { type: cType }), cName);
+                    setProgress({ show: true, label: 'Download started — check your Downloads folder.', pct: 100 });
+                    showToast(`${label} download started ✓`);
+                    setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
+                    return;
+                  }
+                }
+              } catch {}
+              // Last resort — open so user can long-press. Make it clear.
+              showToast('Still blocked — opening video: tap & hold video → Save');
               window.open(original, '_blank', 'noopener');
               setProgress({ show: true, label: 'Opened video — long-press to save.', pct: 100 });
               setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
