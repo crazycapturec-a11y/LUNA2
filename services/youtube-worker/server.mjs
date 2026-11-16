@@ -10,7 +10,14 @@ import { join } from 'node:path';
 // bounded disk space; this is not a distributed queue or a multi-tenant service.
 const secret = process.env.WORKER_SECRET || '';
 if (Buffer.byteLength(secret) < 32) throw new Error('WORKER_SECRET must contain at least 32 bytes');
-const base = new URL(process.env.WORKER_PUBLIC_URL || '');
+const publicUrl = process.env.WORKER_PUBLIC_URL || '';
+if (!publicUrl) throw new Error('WORKER_PUBLIC_URL must be set to the public HTTPS origin of this worker');
+let base;
+try {
+  base = new URL(publicUrl);
+} catch {
+  throw new Error('WORKER_PUBLIC_URL must be an HTTPS origin without credentials or a path');
+}
 const localTest = process.env.WORKER_ALLOW_INSECURE_LOCAL === '1' && base.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(base.hostname);
 if ((!localTest && base.protocol !== 'https:') || base.username || base.password || base.search || base.hash || base.pathname !== '/') {
   throw new Error('WORKER_PUBLIC_URL must be an HTTPS origin without credentials or a path');
@@ -40,6 +47,23 @@ function signedUrl(job) {
   url.searchParams.set('expires', String(expires));
   url.searchParams.set('signature', signature(job.id, expires));
   return url.href;
+}
+// iPhones open media with a Range request and download managers resume from an
+// offset; answering 200 with the whole file makes them treat it as complete.
+function parseRange(header, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+  if (!match || (!match[1] && !match[2])) return null; // no header, or a multi-range request: send it whole
+  let start;
+  let end;
+  if (match[1]) {
+    start = Number(match[1]);
+    end = match[2] ? Number(match[2]) : size - 1;
+  } else {
+    start = Math.max(0, size - Number(match[2]));
+    end = size - 1;
+  }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) return 'invalid';
+  return { start, end: Math.min(end, size - 1) };
 }
 function safeSignature(value, expected) {
   if (!/^[a-f0-9]{64}$/.test(value || '')) return false;
@@ -109,11 +133,21 @@ async function handler(req, res) {
     if (!job || job.status !== 'ready' || !Number.isSafeInteger(expires) || expires * 1000 <= Date.now() || expires * 1000 > job.expires || !safeSignature(sig, signature(job.id, expires))) {
       return json(res, 404, { error: 'This download link is invalid or expired.' });
     }
+    const range = parseRange(req.headers.range, job.size);
+    if (range === 'invalid') {
+      res.writeHead(416, { 'content-range': `bytes */${job.size}`, 'accept-ranges': 'bytes', 'cache-control': 'private, no-store' });
+      res.end();
+      return;
+    }
+    const start = range ? range.start : 0;
+    const end = range ? range.end : job.size - 1;
     job.activeDownloads++;
-    const stream = createReadStream(job.file);
+    const stream = createReadStream(job.file, range ? { start, end } : undefined);
     stream.once('error', () => { if (!res.headersSent) json(res, 500, { error: 'Could not read the prepared file.' }); else res.destroy(); });
     res.once('close', () => { job.activeDownloads--; stream.destroy(); if (job.expires <= Date.now()) void discard(job); });
-    res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': String(job.size), 'content-disposition': `attachment; filename="luna-${job.videoId}.mp4"`, 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' });
+    const headers = { 'content-type': 'video/mp4', 'content-length': String(end - start + 1), 'content-disposition': `attachment; filename="luna-${job.videoId}.mp4"`, 'accept-ranges': 'bytes', 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' };
+    if (range) headers['content-range'] = `bytes ${start}-${end}/${job.size}`;
+    res.writeHead(range ? 206 : 200, headers);
     stream.pipe(res);
     return;
   }

@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { findSupportedLink, type Platform } from './lib/platform-url';
 
 type MediaResult = { platform: Platform; worker?: boolean; title: string; author: string; thumbnail: string; downloads: { hd: string | null; sd: string | null; mp3: string | null }; isImage?: boolean; url: string };
@@ -48,6 +48,11 @@ const I18N: Record<string, Record<string, string>> = {
     featuresTitle: "පහසුව සඳහා නිර්මාණය කර ඇත", faqTitle: "නිතර ප්‍රශ්න"
   }
 };
+
+/** History rows persist across reloads, so a /api/proxy thumbnail (which wraps an
+ * expiring CDN URL) would show as a broken image within hours. Store nothing. */
+const durableThumbnail = (thumbnail: unknown) =>
+  typeof thumbnail === 'string' && thumbnail && !thumbnail.startsWith('/api/proxy') ? thumbnail : '';
 
 /** Source APIs sometimes return a handle with the @ already on it — never render "@@user". */
 const formatAuthor = (author: string) => {
@@ -97,17 +102,25 @@ export default function Home() {
       const parsed = saved ? JSON.parse(saved) : [];
       // Browser storage is only available after hydration.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (Array.isArray(parsed)) setHistory(parsed.filter(item => item && typeof item.url === 'string' && findSupportedLink(item.url)).slice(0, 4));
+      if (Array.isArray(parsed)) setHistory(parsed.filter(item => item && typeof item.url === 'string' && findSupportedLink(item.url)).slice(0, 4).map(item => ({ ...item, thumbnail: durableThumbnail(item.thumbnail) })));
     } catch { /* History is optional when browser storage is unavailable. */ }
   }, []);
 
+  // One timer for every toast: a new toast must not be hidden early by the
+  // previous one's pending timeout.
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 3400);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3400);
   };
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
 
   const saveToHistory = (item: MediaResult) => {
-    const { url, title, author, thumbnail, platform } = item;
+    const { url, title, author, platform } = item;
+    const thumbnail = durableThumbnail(item.thumbnail);
     const newHist = [{ url, title, author, thumbnail, platform }, ...history.filter(h => h.url !== item.url)].slice(0, 4);
     setHistory(newHist);
     try { localStorage.setItem('luna-history', JSON.stringify(newHist)); } catch { /* Continue without persistent history. */ }
@@ -179,7 +192,8 @@ export default function Home() {
           downloads: {
             hd: `/api/youtube/download?url=${encodeURIComponent(data.url || cleanUrl)}&kind=video`,
             sd: null,
-            mp3: null,
+            // Same route with kind=audio returns the m4a audio stream.
+            mp3: `/api/youtube/download?url=${encodeURIComponent(data.url || cleanUrl)}&kind=audio`,
           },
           url: cleanUrl,
         };
@@ -636,11 +650,20 @@ export default function Home() {
                   
                   <div className="dl-actions">
                     {result.platform === 'YouTube' ? (
-                      <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={busy}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
-                        <span className="grow"><span className="label">Download Video</span><span className="sub">Available format</span></span>
-                        <span className="tag">MP4</span>
-                      </button>
+                      <>
+                        <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={busy}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
+                          <span className="grow"><span className="label">Download Video</span><span className="sub">Available format</span></span>
+                          <span className="tag">MP4</span>
+                        </button>
+                        {result.downloads?.mp3 && (
+                          <button className="btn dl-btn" onClick={() => startDownload('mp3')} disabled={busy}>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>
+                            <span className="grow"><span className="label">Download Audio</span><span className="sub">Audio only</span></span>
+                            <span className="tag">M4A</span>
+                          </button>
+                        )}
+                      </>
                     ) : (
                       <>
                         <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={busy}>
