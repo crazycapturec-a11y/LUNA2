@@ -28,63 +28,9 @@ type DownloadResult = {
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const rawUrl: string = typeof body?.url === 'string' ? body.url : '';
+    const url: string = typeof body?.url === 'string' ? body.url : '';
 
-    if (!rawUrl) {
-      return NextResponse.json({ error: 'Please provide a valid link.' }, { status: 400 });
-    }
-
-    // ==========================================
-    // 🎵 TIKTOK LOGIC (Bypasses 403 using TikWM)
-    // ==========================================
-    // Detect TikTok via host parsing to avoid open redirect bypass,
-    // but keep substring fallback for robustness with short links.
-    let isTikTok = false;
-    try {
-      const parsed = new URL(rawUrl);
-      const host = parsed.hostname.toLowerCase();
-      if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) isTikTok = true;
-    } catch {
-      // fall through
-    }
-    if (!isTikTok && rawUrl.includes('tiktok.com')) isTikTok = true;
-
-    if (isTikTok) {
-      const res = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(rawUrl)}`);
-      const data = await res.json().catch(() => null);
-
-      if (!data || data.code !== 0 || !data.data) {
-        return NextResponse.json({ error: 'Could not extract TikTok video. It might be private.' }, { status: 502 });
-      }
-
-      let hd = data.data.hdplay || data.data.play;
-      let music = data.data.music;
-      const cover = data.data.cover || data.data.origin_cover || data.data.ai_dynamic_cover || '';
-      const title = data.data.title || '';
-      const author = data.data.author?.nickname || data.data.author?.unique_id || data.data.author || '';
-
-      if (typeof hd === 'string' && hd.indexOf('//') === 0) hd = 'https:' + hd;
-      if (typeof music === 'string' && music.indexOf('//') === 0) music = 'https:' + music;
-
-      if (!hd) {
-        return NextResponse.json({ error: 'No downloadable video found for this TikTok.' }, { status: 502 });
-      }
-
-      return NextResponse.json({
-        success: true,
-        mediaUrl: hd,
-        mp3Url: typeof music === 'string' ? music : null,
-        mediaType: 'video',
-        title: typeof title === 'string' ? title : '',
-        author: typeof author === 'string' ? author : '',
-        thumbnail: typeof cover === 'string' ? cover : '',
-      });
-    }
-
-    // ==========================================
-    // 📸 INSTAGRAM LOGIC (Robust + Cookies)
-    // ==========================================
-    let cleanUrl = normalizeInstagramPostUrl(rawUrl);
+    let cleanUrl = normalizeInstagramPostUrl(url);
     if (!cleanUrl) {
       return NextResponse.json(
         { error: 'Please provide a valid Instagram reel or post link.' },
@@ -307,7 +253,7 @@ export async function POST(request: Request) {
     );
   } catch {
     return NextResponse.json(
-      { error: 'Something went wrong while reading that link.' },
+      { error: 'Something went wrong while reading that Instagram link.' },
       { status: 500 },
     );
   }
