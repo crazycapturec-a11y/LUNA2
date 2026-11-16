@@ -86,7 +86,7 @@ async function fetchTikwm(videoUrl: string): Promise<TikwmResponse | null> {
         });
         if (!postRes.ok) {
           await postRes.body?.cancel().catch(() => {});
-          return null;
+          continue;
         }
         const payload = (await postRes.json().catch(() => null)) as TikwmResponse | null;
         if (payload?.code === 0 && payload?.data) return payload;
