@@ -3,7 +3,7 @@ import { ultraigdl } from 'ultra-igdl';
 import { instagramAuthOptions, normalizeInstagramPostUrl } from '../../lib/instagram';
 import { fetchSnapInsta } from '../../lib/instagram-fallback';
 import { withInstagramDeadline } from '../../lib/instagram-deadline';
-import { fetchInstagramEmbed, instagramMediaUrl } from '../../lib/instagram-embed';
+import { fetchInstagramEmbed, instagramMediaUrl, type InstagramEmbedAttempt } from '../../lib/instagram-embed';
 import { resolveInstagramShareUrl } from '../../lib/instagram-share';
 
 export const runtime = 'nodejs';
@@ -58,6 +58,7 @@ export async function POST(request: Request) {
     });
 
     let result: DownloadResult;
+    let extractorFailed = false;
     try {
       // Leave time for the fallback within the 60-second function limit, even
       // when the extractor makes several network requests or retries.
@@ -71,17 +72,23 @@ export async function POST(request: Request) {
         return extracted;
       })(), 42000);
     } catch {
+      extractorFailed = true;
       result = { code: 502 };
     }
     const primary = result?.code === 200 ? buildResponse(result, cleanUrl) : null;
     if (primary?.status === 200) return primary;
 
     const code = Number(result?.code);
+    const embedAttempts: InstagramEmbedAttempt[] = [];
     if (![403, 429].includes(code)) {
       // An Instagram page 404 can make ultra-igdl return before trying an embed.
-      // This separate public request goes only to Instagram, without credentials.
-      const embedded = await fetchInstagramEmbed(cleanUrl);
+      // Try public embeds first, then the configured session only on Instagram.
+      const embedded = await fetchInstagramEmbed(cleanUrl, auth, (attempt) => embedAttempts.push(attempt));
       if (embedded) return buildResponse({ code: 200, media: [embedded] }, cleanUrl);
+      if (embedAttempts.some((attempt) => attempt.status === 429)) {
+        console.info('[instagram] lookup failed', { primary: Number.isInteger(code) ? code : 'unknown', extractorFailed, embedAttempts });
+        return NextResponse.json({ error: 'Instagram is rate-limiting requests. Please try again later.' }, { status: 429 });
+      }
 
       // Never transmit an Instagram session to the third-party service, or send
       // the post link there when the server has a shared Instagram session.
@@ -93,10 +100,12 @@ export async function POST(request: Request) {
         }
       }
     }
+    // Log fixed status information only, never the post URL, session, or raw errors.
+    console.info('[instagram] lookup failed', { primary: Number.isInteger(code) ? code : 'unknown', extractorFailed, embedAttempts });
     // Do not expose raw provider/network errors or credential values.
     if (code === 429) return NextResponse.json({ error: 'Instagram is rate-limiting requests. Please try again later.' }, { status: 429 });
     if (code === 403) return NextResponse.json({ error: 'This Instagram post is private or unavailable.' }, { status: 403 });
-    if (code === 404 || primary) return NextResponse.json({ error: 'Instagram media was not found. The post may be unavailable or the server session may have expired.' }, { status: 404 });
+    if (code === 404 || primary) return NextResponse.json({ error: 'Instagram did not provide a downloadable file. The post may be unavailable, the server session may have expired, or Instagram may be blocking the request.' }, { status: 502 });
     return NextResponse.json({ error: 'Could not read this Instagram post. Please try again later.' }, { status: 502 });
   } catch {
     return NextResponse.json(
