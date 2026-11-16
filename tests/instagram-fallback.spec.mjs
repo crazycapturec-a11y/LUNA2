@@ -20,10 +20,13 @@ test('uses SnapInsta only as an unauthenticated fallback and parses safe media U
   delete process.env.IG_SESSION_ID;
   t.mock.method(ultraigdl.prototype, 'download', async () => ({ code: 404, message: 'not found' }));
   const snap = t.mock.method(globalThis, 'fetch', async (url, options) => {
-    if (url === 'https://www.instagram.com/reel/Dfe3hqehJsE/embed/' || url === 'https://www.instagram.com/p/Dfe3hqehJsE/embed/') return new Response('', { status: 404 });
-    assert.equal(url, 'https://www.snapinsta.app/api/ajaxSearch');
+    const parsed = new URL(url);
     assert.equal(options.headers.Cookie, undefined);
     assert.equal(options.headers.cookie, undefined);
+    if (parsed.hostname === 'www.instagram.com' || parsed.hostname === 'i.instagram.com') {
+      return new Response('', { status: 404 });
+    }
+    assert.equal(url, 'https://www.snapinsta.app/api/ajaxSearch');
     assert.equal(options.body.get('q'), 'https://www.instagram.com/reel/Dfe3hqehJsE/');
     return Response.json({ status: 'ok', data: '<a href="https://evil.example/steal.mp4">bad</a><a href="https://cdninstagram.com/reel.mp4?a=1&amp;b=2">video</a>' });
   });
@@ -33,7 +36,7 @@ test('uses SnapInsta only as an unauthenticated fallback and parses safe media U
   assert.equal(body.mediaUrl, 'https://cdninstagram.com/reel.mp4?a=1&b=2');
   assert.equal(body.mediaType, 'video');
   assert.equal(body.extension, 'mp4');
-  assert.equal(snap.mock.callCount(), 3);
+  assert.equal(snap.mock.calls.filter(call => call.arguments[0] === 'https://www.snapinsta.app/api/ajaxSearch').length, 1);
 });
 
 test('returns a safe error when both providers fail', async (t) => {

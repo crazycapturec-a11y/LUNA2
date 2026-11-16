@@ -63,10 +63,20 @@ function extensionFor(kind: string, contentType: string): string {
   return 'mp4';
 }
 
+const SAFE_INLINE_IMAGE_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+]);
+
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const target = params.get('url');
   const kind = params.get('kind') || 'video';
+  const inlineImage = kind === 'image' && params.get('disposition') === 'inline';
   const requestedName = params.get('filename');
 
   if (!target) return NextResponse.json({ error: 'Missing URL' }, { status: 400 });
@@ -82,8 +92,8 @@ export async function GET(request: NextRequest) {
   const baseHeaders: Record<string, string> = {
     // Bare minimum headers: CDNs reject requests that impersonate the app too hard.
     'User-Agent':
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    Accept: '*/*',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    Accept: inlineImage ? 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' : '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
     Referer: isInstagramHost ? 'https://www.instagram.com/' : isTikwmHost ? 'https://www.tikwm.com/' : 'https://www.tiktok.com/',
   };
@@ -91,7 +101,7 @@ export async function GET(request: NextRequest) {
   try {
     let upstream = await fetchAllowedMedia(target, baseHeaders);
 
-    // Some TikTok CDN edges answer 403 unless a byte range is requested.
+    // Some CDN edges answer 403 unless a byte range is requested.
     if ([401, 403, 451].includes(upstream.status)) {
       await upstream.body?.cancel();
       upstream = await fetchAllowedMedia(target, { ...baseHeaders, Range: 'bytes=0-' });
@@ -104,19 +114,41 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const contentType = upstream.headers.get('content-type') || 'video/mp4';
+    const defaultType = kind === 'audio' ? 'audio/mpeg' : kind === 'image' ? 'image/jpeg' : 'video/mp4';
+    const contentType = upstream.headers.get('content-type') || defaultType;
+    const mime = contentType.split(';', 1)[0].trim().toLowerCase();
+
+    // Never save an upstream HTML error page disguised as a media download.
+    if (mime === 'text/html' || mime === 'application/xhtml+xml') {
+      await upstream.body.cancel().catch(() => {});
+      return NextResponse.json(
+        { error: 'The media link expired or was declined by the server. Fetch the link again.' },
+        { status: 502 },
+      );
+    }
+
+    if (inlineImage && !SAFE_INLINE_IMAGE_TYPES.has(mime)) {
+      await upstream.body.cancel().catch(() => {});
+      return NextResponse.json({ error: 'Unsupported preview image type.' }, { status: 415 });
+    }
+
     const filename = requestedName
       ? safeFilename(requestedName, `luna-download.${extensionFor(kind, contentType)}`)
       : `luna-download.${extensionFor(kind, contentType)}`;
 
     const headers: Record<string, string> = {
-      'Content-Type': contentType,
-      'Content-Disposition': contentDisposition(
-        filename.includes('.') ? filename : `${filename}.${extensionFor(kind, contentType)}`,
-      ),
+      'Content-Type': inlineImage ? mime : contentType,
+      'Content-Disposition': inlineImage
+        ? 'inline'
+        : contentDisposition(
+            filename.includes('.') ? filename : `${filename}.${extensionFor(kind, contentType)}`,
+          ),
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
     };
+    if (inlineImage) {
+      headers['Content-Security-Policy'] = "default-src 'none'";
+    }
 
     const length = upstream.headers.get('content-length');
     if (length) headers['Content-Length'] = length;

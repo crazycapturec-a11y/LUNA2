@@ -72,15 +72,22 @@ account credentials and expire or can be blocked, so they do not guarantee a
 working download. A shared server session may allow visitors to request media
 visible to that account; restrict access and use an account with appropriate
 permissions rather than exposing a personal account's session publicly. If the
-main extractor cannot read a post, LUNA may try Instagram's public embed and,
-if configured, an authenticated embed. The authenticated embed sends the server
-session only to Instagram and does not follow redirects. Instagram share links
-are resolved without the server session. When no Instagram session is configured,
+main extractor cannot read a post, LUNA tries Instagram's public captioned and
+standard embeds, first-party Instagram web GraphQL / Polaris and media info
+endpoints, and (if a session is configured and still valid) authenticated
+first-party Instagram endpoints. Authenticated requests go only to
+`www.instagram.com` and never follow redirects; if Instagram redirects the
+session to login, LUNA flags `sessionInvalid: true` and falls back to public
+lookups. Optional `IG_GRAPHQL_DOC_ID` and `IG_POLARIS_DOC_ID` environment
+variables can override the built-in persisted query IDs if Instagram rotates
+them before preloader auto-discovery catches up. Instagram share links are
+resolved without the server session. When no Instagram session is configured,
 LUNA may also send the normalized post link (but no Instagram cookies) to
 SnapInsta as a fallback. Instagram and third-party services can block the server
-or reject requests, so neither fallback guarantees a download. On lookup failure,
-server logs include the extractor status and embed attempt statuses; they do not
-include post URLs, cookie values, response bodies, or raw network errors.
+or reject requests, so no fallback guarantees a download. On lookup failure,
+server logs include only structured status metadata (`primary`, `sessionInvalid`,
+`gated`, `embedAttempts`, `directAttempts`); they never include post URLs,
+shortcodes, cookie values, response bodies, or raw network errors.
 
 The pinned `ultra-igdl` version has a small local patch to prevent unhandled
 promise rejections on network errors. Install with `npm ci` and keep lifecycle
