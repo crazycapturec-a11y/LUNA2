@@ -345,7 +345,7 @@ export default function Home() {
     } catch (err) {
       const raw = err instanceof Error ? err.message : 'Download failed. Try again.';
       // If the relay is blocked (403 from CDN on the server's IP), the user's
-      // own IP is often not blocked — open the direct CDN URL as fallback.
+      // own IP is often not blocked — try a direct browser download first.
       if (/403|media source/i.test(raw)) {
         try {
           const original = new URL(downloadUrl, window.location.origin).searchParams.get('url');
@@ -355,9 +355,45 @@ export default function Home() {
               'tiktokcdn.com','tiktokcdn-us.com','tiktokcdn-eu.com','tiktokv.com','tiktokv.us','tiktok.com','tikwm.com','byteoversea.com','ibytedtos.com','muscdn.com','musical.ly','cdninstagram.com','fbcdn.net','instagram.com'
             ].some(s => host === s || host.endsWith('.'+s));
             if (allowed) {
-              showToast('Server blocked (403) — opening direct file in new tab…');
+              showToast('Server blocked — trying direct download…');
+              setProgress({ show: true, label: `Downloading ${label}…`, pct: null });
+              try {
+                const directResp = await fetch(original, { signal: AbortSignal.timeout(30000) });
+                if (directResp.ok && directResp.body) {
+                  const dLen = Number(directResp.headers.get('content-length')) || 0;
+                  const dReader = directResp.body.getReader();
+                  const dChunks: BlobPart[] = [];
+                  let dReceived = 0;
+                  while (true) {
+                    const { done, value } = await dReader.read();
+                    if (done) break;
+                    if (value) {
+                      dChunks.push(value as unknown as BlobPart);
+                      dReceived += value.length;
+                      if (dLen > 0) {
+                        const pct = Math.min(99, (dReceived / dLen) * 100);
+                        setProgress({ show: true, label: `Downloading ${label}… ${pct.toFixed(0)}%`, pct });
+                      } else {
+                        setProgress({ show: true, label: `Downloading ${label}… ${(dReceived / 1048576).toFixed(1)} MB`, pct: null });
+                      }
+                    }
+                  }
+                  if (dReceived > 0) {
+                    const dType = directResp.headers.get('content-type') || 'video/mp4';
+                    const dName = filename.includes('.') ? filename : `${filename}.${label === 'MP3' ? 'mp3' : 'mp4'}`;
+                    saveBlob(new Blob(dChunks, { type: dType }), dName);
+                    setProgress({ show: true, label: 'Download started — check your Downloads folder.', pct: 100 });
+                    showToast(`${label} download started ✓`);
+                    setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
+                    return;
+                  }
+                }
+              } catch {}
+              // Direct fetch failed (often CORS) — open in new tab as last resort.
+              // The video will play; user can long-press to Save.
+              showToast('Direct download blocked — opening video (long-press to save)…');
               window.open(original, '_blank', 'noopener');
-              setProgress({ show: true, label: 'Opened direct file — check new tab.', pct: 100 });
+              setProgress({ show: true, label: 'Opened video — long-press to save.', pct: 100 });
               setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
               return;
             }
