@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
@@ -7,7 +8,10 @@ export const metadata: Metadata = {
   description: "Save available videos from TikTok, Instagram and YouTube in a few simple steps.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+// Typed explicitly instead of relying on the generated `LayoutProps` type, which
+// only exists after `next build` has written .next/types (clean-clone typecheck
+// used to fail with TS2304).
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body>
