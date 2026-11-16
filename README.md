@@ -72,12 +72,15 @@ account credentials and expire or can be blocked, so they do not guarantee a
 working download. A shared server session may allow visitors to request media
 visible to that account; restrict access and use an account with appropriate
 permissions rather than exposing a personal account's session publicly. If the
-main extractor cannot read a post, LUNA may try Instagram's public embed without
-sending the server session. Instagram share links are resolved on Instagram
-without the server session before extraction. When no Instagram session is configured, LUNA may
-also send the normalized post link (but no Instagram cookies) to SnapInsta as a
-fallback. Instagram and third-party services can block the server or reject
-requests, so neither fallback guarantees a download.
+main extractor cannot read a post, LUNA may try Instagram's public embed and,
+if configured, an authenticated embed. The authenticated embed sends the server
+session only to Instagram and does not follow redirects. Instagram share links
+are resolved without the server session. When no Instagram session is configured,
+LUNA may also send the normalized post link (but no Instagram cookies) to
+SnapInsta as a fallback. Instagram and third-party services can block the server
+or reject requests, so neither fallback guarantees a download. On lookup failure,
+server logs include the extractor status and embed attempt statuses; they do not
+include post URLs, cookie values, response bodies, or raw network errors.
 
 The pinned `ultra-igdl` version has a small local patch to prevent unhandled
 promise rejections on network errors. Install with `npm ci` and keep lifecycle

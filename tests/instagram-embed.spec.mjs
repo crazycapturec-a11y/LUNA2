@@ -91,5 +91,82 @@ test('rejects redirects and oversized responses in the embed lookup', async (t) 
   assert.equal(await fetchInstagramEmbed(reel), null);
   body = new Response(null, { status: 302, headers: { location: 'https://example.com/' } });
   assert.equal(await fetchInstagramEmbed(reel), null);
-  assert.equal(mock.mock.callCount(), 2);
+  assert.equal(mock.mock.callCount(), 4);
+});
+
+test('uses the configured session only on Instagram after public embeds fail for the reported reel', async (t) => {
+  setEnv(t, 'sessionid=fake-secret; csrftoken=fake');
+  const reported = 'https://www.instagram.com/reel/DeWOVfHJREZ/?dlrf=MThyOHp0YTYwZWU3Yg==';
+  t.mock.method(ultraigdl.prototype, 'download', async url => {
+    assert.equal(url, 'https://www.instagram.com/reel/DeWOVfHJREZ/');
+    return { code: 404 };
+  });
+  const fetchMock = t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (options.headers.Cookie) return new Response(embed({ shortcode: 'DeWOVfHJREZ', is_video: true, video_url: media }));
+    return new Response('', { status: 404 });
+  });
+  const response = await POST(new Request('http://test.local/api/download', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: reported }) }));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).mediaUrl, media);
+  assert.equal(fetchMock.mock.callCount(), 3);
+  const calls = fetchMock.mock.calls;
+  assert.deepEqual(calls.map(call => call.arguments[0]), [
+    'https://www.instagram.com/reel/DeWOVfHJREZ/embed/',
+    'https://www.instagram.com/p/DeWOVfHJREZ/embed/',
+    'https://www.instagram.com/reel/DeWOVfHJREZ/embed/',
+  ]);
+  assert.equal(calls[0].arguments[1].headers.Cookie, undefined);
+  assert.equal(calls[1].arguments[1].headers.Cookie, undefined);
+  assert.equal(calls[2].arguments[1].headers.Cookie, process.env.IG_COOKIES);
+  for (const call of calls) assert.equal(call.arguments[1].redirect, 'error');
+});
+
+test('uses the alternate post embed for a reel but never accepts its poster as the video', async (t) => {
+  const calls = t.mock.method(globalThis, 'fetch', async url => {
+    if (url.includes('/p/')) return new Response(embed({ shortcode, is_video: true, video_url: media }));
+    return new Response('', { status: 404 });
+  });
+  assert.equal((await fetchInstagramEmbed(reel)).url, media);
+  assert.equal(calls.mock.callCount(), 2);
+});
+
+test('stops embed requests when Instagram responds with rate limiting', async (t) => {
+  const calls = t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 429 }));
+  assert.equal(await fetchInstagramEmbed(reel, { cookies: 'sessionid=fake' }), null);
+  assert.equal(calls.mock.callCount(), 1);
+});
+
+test('returns a neutral retrieval failure when upstream reports 404', async (t) => {
+  setEnv(t, 'sessionid=fake-secret');
+  t.mock.method(ultraigdl.prototype, 'download', async () => ({ code: 404 }));
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const response = await POST(request());
+  assert.equal(response.status, 502);
+  const body = await response.json();
+  assert.match(body.error, /did not provide a downloadable file/);
+  assert.ok(!body.error.includes('fake-secret'));
+});
+
+test('reports embed rate limiting and does not contact a third party', async (t) => {
+  setEnv(t, '');
+  t.mock.method(ultraigdl.prototype, 'download', async () => ({ code: 404 }));
+  const calls = t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 429 }));
+  const response = await POST(request());
+  assert.equal(response.status, 429);
+  assert.equal(calls.mock.callCount(), 1);
+});
+
+test('failure diagnostics never contain the link, cookies, response bodies, or exceptions', async (t) => {
+  setEnv(t, 'sessionid=fake-secret');
+  t.mock.method(ultraigdl.prototype, 'download', async () => ({ code: 404, message: 'fake-secret' }));
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('fake-secret ' + reel); });
+  const logs = t.mock.method(console, 'info', () => {});
+  const response = await POST(request());
+  assert.equal(response.status, 502);
+  assert.equal(logs.mock.callCount(), 1);
+  const log = JSON.stringify(logs.mock.calls[0].arguments);
+  assert.ok(log.includes('network_error'));
+  assert.ok(!log.includes('fake-secret'));
+  assert.ok(!log.includes(shortcode));
+  assert.ok(!log.includes('instagram.com'));
 });

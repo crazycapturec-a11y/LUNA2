@@ -1,5 +1,5 @@
 type InstagramEnvironment = { IG_COOKIES?: string; IG_SESSION_ID?: string };
-type InstagramAuthOptions = { cookies?: string; sessionId?: string };
+export type InstagramAuthOptions = { cookies?: string; sessionId?: string };
 
 /** Read credentials only on the server. Never include their values in errors. */
 export function instagramAuthOptions(env: InstagramEnvironment = { IG_COOKIES: process.env.IG_COOKIES, IG_SESSION_ID: process.env.IG_SESSION_ID }): InstagramAuthOptions {

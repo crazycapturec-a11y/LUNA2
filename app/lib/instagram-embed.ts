@@ -1,6 +1,8 @@
 import { load } from 'cheerio';
+import type { InstagramAuthOptions } from './instagram';
 
 export type InstagramEmbedMedia = { url: string; type: 'video' | 'image'; thumbnail?: string };
+export type InstagramEmbedAttempt = { kind: string; authenticated: boolean; status: number | 'network_error'; mediaFound: boolean };
 
 /** Only return media URLs accepted by the same-origin proxy. */
 export function instagramMediaUrl(value: unknown): string {
@@ -87,27 +89,54 @@ async function readLimited(response: Response): Promise<string | null> {
   }
 }
 
-/** Public fallback: only Instagram receives the shortcode, and no cookies are sent. */
-export async function fetchInstagramEmbed(url: string): Promise<InstagramEmbedMedia | null> {
+/** Try public, then (if configured) authenticated embeds, only on Instagram. */
+export async function fetchInstagramEmbed(
+  url: string,
+  auth: InstagramAuthOptions = {},
+  onAttempt?: (attempt: InstagramEmbedAttempt) => void,
+): Promise<InstagramEmbedMedia | null> {
   const parsed = new URL(url);
   const match = parsed.pathname.match(/^\/(reel|p|tv)\/([A-Za-z0-9_-]+)\/$/i);
   if (!match) return null;
-  const [, type, shortcode] = match;
-  try {
-    const response = await fetch(`https://www.instagram.com/${type.toLowerCase()}/${shortcode}/embed/`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36',
-        Accept: 'text/html,*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      redirect: 'error',
-      cache: 'no-store',
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) { await response.body?.cancel(); return null; }
-    const html = await readLimited(response);
-    return html ? parseInstagramEmbed(html, shortcode, type.toLowerCase() !== 'p') : null;
-  } catch {
-    return null;
+  const [, rawType, shortcode] = match;
+  const type = rawType.toLowerCase();
+  const cookie = auth.cookies || (auth.sessionId ? `sessionid=${auth.sessionId}` : '');
+  const kinds = type === 'p' ? ['p'] : [type, 'p'];
+  const deadline = AbortSignal.timeout(5000);
+  // Preserve the original type when parsing an alternate /p/ embed: it must
+  // not turn a reel into a photo even if Instagram canonicalizes its URL.
+  for (const session of cookie ? ['', cookie] : ['']) {
+    for (const kind of kinds) {
+      if (deadline.aborted) return null;
+      try {
+        const headers: Record<string, string> = {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36',
+          Accept: 'text/html,*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
+        };
+        if (session) headers.Cookie = session;
+        const response = await fetch(`https://www.instagram.com/${kind}/${shortcode}/embed/`, {
+          headers,
+          // Never forward the session to any redirect, including another host.
+          redirect: 'error',
+          cache: 'no-store',
+          signal: AbortSignal.any([deadline, AbortSignal.timeout(1800)]),
+        });
+        if (!response.ok) {
+          onAttempt?.({ kind, authenticated: Boolean(session), status: response.status, mediaFound: false });
+          await response.body?.cancel();
+          if (response.status === 429) return null;
+          continue;
+        }
+        const html = await readLimited(response);
+        const media = html ? parseInstagramEmbed(html, shortcode, type !== 'p') : null;
+        onAttempt?.({ kind, authenticated: Boolean(session), status: response.status, mediaFound: Boolean(media) });
+        if (media) return media;
+      } catch {
+        // Never record exception text: it may contain request details.
+        onAttempt?.({ kind, authenticated: Boolean(session), status: 'network_error', mediaFound: false });
+      }
+    }
   }
+  return null;
 }

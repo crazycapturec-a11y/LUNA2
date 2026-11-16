@@ -38,17 +38,17 @@ test('passes configured cookies to the extractor and does not expose errors or s
   assert.equal((await POST(request('https://evil.example/instagram.com/reel/ABC_123/'))).status, 400);
   assert.equal(mock.mock.callCount(), calls);
 
-  const fallbackFetch = t.mock.method(globalThis, 'fetch', async (url, options) => {
-    assert.equal(url, 'https://www.instagram.com/reel/ABC_123/embed/');
-    assert.equal(options.headers.Cookie, undefined);
-    assert.equal(options.headers.cookie, undefined);
-    return new Response('', { status: 404 });
-  });
+  const fallbackFetch = t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
   response = { code: 500, message: `failed with ${process.env.IG_COOKIES}` };
   const failed = await POST(request('https://www.instagram.com/reel/ABC_123/'));
   assert.equal(failed.status, 502);
   assert.ok(!(await failed.text()).includes('fake-secret'));
-  assert.equal(fallbackFetch.mock.callCount(), 1);
+  assert.equal(fallbackFetch.mock.callCount(), 4);
+  for (const [index, call] of fallbackFetch.mock.calls.entries()) {
+    assert.match(call.arguments[0], /^https:\/\/www\.instagram\.com\/(reel|p)\/ABC_123\/embed\/$/);
+    assert.equal(call.arguments[1].redirect, 'error');
+    assert.equal(call.arguments[1].headers.Cookie, index < 2 ? undefined : process.env.IG_COOKIES);
+  }
 
   process.env.IG_COOKIES = 'no-sessionid=unsafe';
   const invalid = await POST(request('https://www.instagram.com/reel/ABC_123/'));
