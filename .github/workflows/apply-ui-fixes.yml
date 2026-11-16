@@ -1,0 +1,26 @@
+name: apply-ui-fixes
+on:
+  push:
+    branches: [fix/ui-polish]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/ui-polish
+          fetch-depth: 0
+      - name: Apply the UI fixes patch
+        run: |
+          set -euo pipefail
+          git config user.name "LUNA fix bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git apply --ignore-whitespace --verbose ui-fixes.patch
+          test "$(git hash-object app/page.tsx)" = "2ff5ea406953c702a972cbfe72aefa1a1907d114"
+          git rm -q ui-fixes.patch .github/workflows/apply-ui-fixes.yml
+          git add app/page.tsx
+          git commit -m "fix: no double @ in authors, and buttons free right after a download"
+          git push origin HEAD:fix/ui-polish
