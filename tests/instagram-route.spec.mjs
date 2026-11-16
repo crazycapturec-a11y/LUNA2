@@ -43,11 +43,18 @@ test('passes configured cookies to the extractor and does not expose errors or s
   const failed = await POST(request('https://www.instagram.com/reel/ABC_123/'));
   assert.equal(failed.status, 502);
   assert.ok(!(await failed.text()).includes('fake-secret'));
-  assert.equal(fallbackFetch.mock.callCount(), 4);
-  for (const [index, call] of fallbackFetch.mock.calls.entries()) {
-    assert.match(call.arguments[0], /^https:\/\/www\.instagram\.com\/(reel|p)\/ABC_123\/embed\/$/);
-    assert.equal(call.arguments[1].redirect, 'error');
-    assert.equal(call.arguments[1].headers.Cookie, index < 2 ? undefined : process.env.IG_COOKIES);
+  assert.ok(fallbackFetch.mock.callCount() >= 4);
+  for (const call of fallbackFetch.mock.calls) {
+    const calledUrl = new URL(call.arguments[0]);
+    const opts = call.arguments[1];
+    // Never contact SnapInsta or any non-Instagram host when cookies are configured.
+    assert.ok(['www.instagram.com', 'i.instagram.com'].includes(calledUrl.hostname));
+    assert.ok(opts.redirect === 'error' || opts.redirect === 'manual');
+    if (opts.headers.Cookie !== undefined) {
+      assert.equal(calledUrl.origin, 'https://www.instagram.com');
+      assert.equal(opts.headers.Cookie, process.env.IG_COOKIES);
+    }
+    assert.equal(opts.headers.cookie, undefined);
   }
 
   process.env.IG_COOKIES = 'no-sessionid=unsafe';

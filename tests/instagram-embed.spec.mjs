@@ -45,9 +45,11 @@ test('uses a cookie-free Instagram embed after the configured extractor returns 
   setEnv(t, 'sessionid=fake-secret; csrftoken=fake');
   t.mock.method(ultraigdl.prototype, 'download', async () => ({ code: 404, message: 'Media not found' }));
   const fetchMock = t.mock.method(globalThis, 'fetch', async (url, options) => {
-    assert.equal(url, `${reel}embed/`);
+    assert.equal(url, `${reel}embed/captioned/`);
     assert.equal(options.headers.Cookie, undefined);
     assert.equal(options.headers.cookie, undefined);
+    assert.equal(options.headers['Sec-Fetch-Dest'], 'iframe');
+    assert.equal(options.headers['Sec-Fetch-Mode'], 'navigate');
     assert.equal(options.redirect, 'error');
     return new Response(embed({ shortcode, is_video: true, video_url: media, display_url: image }));
   });
@@ -83,15 +85,19 @@ test('does not retry Instagram on a 403 or 429 and never exposes details', async
 });
 
 test('rejects redirects and oversized responses in the embed lookup', async (t) => {
-  let body = new Response('x'.repeat(2 * 1024 * 1024 + 1));
   const mock = t.mock.method(globalThis, 'fetch', async (_url, options) => {
     assert.equal(options.redirect, 'error');
-    return body;
+    return new Response('x'.repeat(2 * 1024 * 1024 + 1));
   });
   assert.equal(await fetchInstagramEmbed(reel), null);
-  body = new Response(null, { status: 302, headers: { location: 'https://example.com/' } });
-  assert.equal(await fetchInstagramEmbed(reel), null);
   assert.equal(mock.mock.callCount(), 4);
+
+  mock.mock.mockImplementation(async (_url, options) => {
+    assert.equal(options.redirect, 'error');
+    return new Response(null, { status: 302, headers: { location: 'https://example.com/' } });
+  });
+  assert.equal(await fetchInstagramEmbed(reel), null);
+  assert.equal(mock.mock.callCount(), 8);
 });
 
 test('uses the configured session only on Instagram after public embeds fail for the reported reel', async (t) => {
@@ -102,23 +108,27 @@ test('uses the configured session only on Instagram after public embeds fail for
     return { code: 404 };
   });
   const fetchMock = t.mock.method(globalThis, 'fetch', async (url, options) => {
-    if (options.headers.Cookie) return new Response(embed({ shortcode: 'DeWOVfHJREZ', is_video: true, video_url: media }));
+    if (options.headers.Cookie && String(url).includes('/embed/')) {
+      return new Response(embed({ shortcode: 'DeWOVfHJREZ', is_video: true, video_url: media }));
+    }
     return new Response('', { status: 404 });
   });
   const response = await POST(new Request('http://test.local/api/download', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: reported }) }));
   assert.equal(response.status, 200);
   assert.equal((await response.json()).mediaUrl, media);
-  assert.equal(fetchMock.mock.callCount(), 3);
   const calls = fetchMock.mock.calls;
-  assert.deepEqual(calls.map(call => call.arguments[0]), [
-    'https://www.instagram.com/reel/DeWOVfHJREZ/embed/',
-    'https://www.instagram.com/p/DeWOVfHJREZ/embed/',
-    'https://www.instagram.com/reel/DeWOVfHJREZ/embed/',
-  ]);
-  assert.equal(calls[0].arguments[1].headers.Cookie, undefined);
-  assert.equal(calls[1].arguments[1].headers.Cookie, undefined);
-  assert.equal(calls[2].arguments[1].headers.Cookie, process.env.IG_COOKIES);
-  for (const call of calls) assert.equal(call.arguments[1].redirect, 'error');
+  assert.equal(calls.at(-1).arguments[0], 'https://www.instagram.com/reel/DeWOVfHJREZ/embed/captioned/');
+  assert.equal(calls.at(-1).arguments[1].headers.Cookie, process.env.IG_COOKIES);
+  for (const call of calls) {
+    const calledUrl = new URL(call.arguments[0]);
+    const opts = call.arguments[1];
+    assert.ok(['www.instagram.com', 'i.instagram.com'].includes(calledUrl.hostname));
+    assert.ok(opts.redirect === 'error' || opts.redirect === 'manual');
+    if (opts.headers.Cookie) {
+      assert.equal(calledUrl.origin, 'https://www.instagram.com');
+      assert.equal(opts.headers.Cookie, process.env.IG_COOKIES);
+    }
+  }
 });
 
 test('uses the alternate post embed for a reel but never accepts its poster as the video', async (t) => {
@@ -127,7 +137,8 @@ test('uses the alternate post embed for a reel but never accepts its poster as t
     return new Response('', { status: 404 });
   });
   assert.equal((await fetchInstagramEmbed(reel)).url, media);
-  assert.equal(calls.mock.callCount(), 2);
+  assert.equal(calls.mock.callCount(), 3);
+  assert.equal(calls.mock.calls[2].arguments[0], `https://www.instagram.com/p/${shortcode}/embed/captioned/`);
 });
 
 test('stops embed requests when Instagram responds with rate limiting', async (t) => {

@@ -179,18 +179,38 @@ export default function Home() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url: cleanUrl }),
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to fetch Instagram media.');
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.mediaUrl) {
+          throw new Error(
+            data?.error ||
+              (res.status === 504
+                ? 'Instagram took too long to respond. Please try again.'
+                : 'Failed to fetch Instagram media.'),
+          );
+        }
 
         const fileBase = `luna-instagram-${Date.now()}`;
         const ext = data.extension === 'jpg' ? 'jpg' : 'mp4';
         const downloadUrl = `/api/proxy?url=${encodeURIComponent(data.mediaUrl)}&kind=${ext === 'jpg' ? 'image' : 'video'}&filename=${fileBase}.${ext}`;
+        const previewUrl =
+          typeof data.thumbnail === 'string' && data.thumbnail
+            ? `/api/proxy?url=${encodeURIComponent(data.thumbnail)}&kind=image&disposition=inline`
+            : '';
+        const rawCaption = typeof data.caption === 'string' ? data.caption.trim() : '';
+        const shortCaption = rawCaption
+          ? rawCaption.split('\n')[0].slice(0, 100)
+          : '';
+        const rawAuthor =
+          (typeof data.author === 'string' && data.author.trim()) ||
+          (typeof data.username === 'string' && data.username.trim()
+            ? `@${data.username.trim().replace(/^@/, '')}`
+            : '');
 
         const newResult: MediaResult = {
           platform: 'Instagram',
-          title: data.title || 'Instagram Video',
-          author: data.author || 'Instagram Creator',
-          thumbnail: data.thumbnail || '',
+          title: data.title || shortCaption || (ext === 'jpg' ? 'Instagram Photo' : 'Instagram Video'),
+          author: rawAuthor || 'Instagram Creator',
+          thumbnail: previewUrl,
           downloads: { hd: downloadUrl, sd: null, mp3: null },
           isImage: ext === 'jpg',
           url: cleanUrl,
