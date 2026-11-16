@@ -38,6 +38,79 @@ function absolute(url?: string): string {
   return url;
 }
 
+const TIKWM_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
+
+async function fetchTikwm(videoUrl: string): Promise<TikwmResponse | null> {
+  const endpoints = [
+    `https://www.tikwm.com/api/?url=${encodeURIComponent(videoUrl)}&hd=1`,
+    `https://tikwm.com/api/?url=${encodeURIComponent(videoUrl)}&hd=1`,
+  ];
+
+  for (const endpoint of endpoints) {
+    // Try GET first (documented fast path)
+    try {
+      const res = await fetch(endpoint, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(8000),
+        redirect: 'manual',
+        headers: {
+          'User-Agent': TIKWM_UA,
+          Accept: 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          Referer: 'https://www.tikwm.com/',
+          Origin: 'https://www.tikwm.com',
+        },
+      });
+
+      if (res.status === 403 || res.status === 429) {
+        // Rate-limited by tikwm (common on cloud IPs) — try POST fallback once
+        // and then let caller fall through to direct TikTok page
+        try {
+          await res.body?.cancel().catch(() => {});
+        } catch {}
+        const postRes = await fetch(`https://www.tikwm.com/api/`, {
+          method: 'POST',
+          cache: 'no-store',
+          signal: AbortSignal.timeout(8000),
+          redirect: 'manual',
+          headers: {
+            'User-Agent': TIKWM_UA,
+            Accept: 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            Referer: 'https://www.tikwm.com/',
+            Origin: 'https://www.tikwm.com',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: `url=${encodeURIComponent(videoUrl)}&hd=1`,
+        });
+        if (!postRes.ok) {
+          await postRes.body?.cancel().catch(() => {});
+          return null;
+        }
+        const payload = (await postRes.json().catch(() => null)) as TikwmResponse | null;
+        if (payload?.code === 0 && payload?.data) return payload;
+        continue;
+      }
+
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => {});
+        continue;
+      }
+
+      const payload = (await res.json().catch(() => null)) as TikwmResponse | null;
+      if (payload?.code !== 0 || !payload?.data) {
+        continue;
+      }
+      return payload;
+    } catch {
+      // network error — try next endpoint / fallback to direct
+      continue;
+    }
+  }
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   const raw = request.nextUrl.searchParams.get('url');
   if (!raw) return NextResponse.json({ error: 'Missing URL' }, { status: 400 });
@@ -47,50 +120,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'That does not look like a TikTok link.' }, { status: 400 });
   }
 
-  const endpoints = [
-    `https://www.tikwm.com/api/?url=${encodeURIComponent(videoUrl)}&hd=1`,
-    `https://tikwm.com/api/?url=${encodeURIComponent(videoUrl)}&hd=1`,
-  ];
-
   let lastError = 'Could not read this TikTok video.';
 
-  for (const endpoint of endpoints) {
-    try {
-      const res = await fetch(endpoint, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(8000),
-        redirect: 'manual',
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          Accept: 'application/json',
-          Referer: 'https://www.tikwm.com/',
-        },
-      });
+  const tikwm = await fetchTikwm(videoUrl);
+  if (tikwm?.data) {
+    const data = tikwm.data;
+    const hd = absolute(data.hdplay) || absolute(data.play);
+    const sd = absolute(data.play) || hd;
+    const music = absolute(data.music) || absolute(data.music_info?.play);
 
-      if (!res.ok) {
-        lastError = `TikTok lookup failed (HTTP ${res.status}).`;
-        continue;
-      }
-
-      const payload = (await res.json()) as TikwmResponse;
-      if (payload?.code !== 0 || !payload?.data) {
-        lastError = 'Could not extract this TikTok video from the lookup service.';
-        continue;
-      }
-
-      const data = payload.data;
-      const hd = absolute(data.hdplay) || absolute(data.play);
-      const sd = absolute(data.play) || hd;
-      const music = absolute(data.music) || absolute(data.music_info?.play);
-
-      if (!hd) {
-        lastError = 'No downloadable video file was found for this TikTok link.';
-        continue;
-      }
-
+    if (hd) {
       const filenameBase = `luna-tiktok-${data.id || Date.now()}`;
-
       return NextResponse.json({
         success: true,
         id: data.id,
@@ -98,23 +138,20 @@ export async function GET(request: NextRequest) {
         author: data.author?.unique_id || data.author?.nickname || 'tiktok',
         thumbnail: absolute(data.origin_cover) || absolute(data.cover),
         duration: data.duration,
-        // Direct media URLs (kept for compatibility) plus ready-to-use same-origin
-        // download links that stream through /api/proxy with an attachment header.
         hdUrl: hd,
         sdUrl: sd,
         mp3Url: music || null,
         downloadUrls: {
           hd: `/api/proxy?url=${encodeURIComponent(hd)}&kind=video&filename=${filenameBase}-hd.mp4`,
           sd: `/api/proxy?url=${encodeURIComponent(sd)}&kind=video&filename=${filenameBase}-sd.mp4`,
-          mp3: music
-            ? `/api/proxy?url=${encodeURIComponent(music)}&kind=audio&filename=${filenameBase}.mp3`
-            : null,
+          mp3: music ? `/api/proxy?url=${encodeURIComponent(music)}&kind=audio&filename=${filenameBase}.mp3` : null,
         },
         url: videoUrl,
       });
-    } catch {
-      lastError = 'Could not reach the TikTok lookup service.';
     }
+    lastError = 'No downloadable video file was found for this TikTok link.';
+  } else {
+    lastError = 'TikTok lookup failed. The lookup service may be rate-limited from this server.';
   }
 
   // TikWM can reject hosting-provider IPs. Try TikTok's page directly without

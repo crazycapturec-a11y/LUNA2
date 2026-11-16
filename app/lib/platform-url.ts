@@ -2,10 +2,11 @@ export type Platform = 'TikTok' | 'Instagram' | 'YouTube';
 
 /** Extract a supported URL from either a link or a typical share message. */
 export function findSupportedLink(input: string): { platform: Platform; url: string } | null {
-  const candidates = input.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+  // Exclude brackets/parens that appear in Markdown like `[https://...](https://...)`
+  const candidates = input.match(/https?:\/\/[^\s<>"'()\[\]]+/gi) ?? [];
   for (const candidate of candidates) {
     try {
-      const url = new URL(candidate.replace(/[),.!?;\]}]+$/, ''));
+      const url = new URL(candidate.replace(/[),.!?;\\]}'"`]+$/, '').replace(/^['"`]+/, ''));
       if (url.username || url.password || url.port) continue;
       const host = url.hostname.toLowerCase();
       let platform: Platform | null = null;
