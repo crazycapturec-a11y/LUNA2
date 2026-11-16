@@ -278,7 +278,7 @@ export default function Home() {
     };
 
     try {
-      const resp = await fetch(downloadUrl);
+      const resp = await fetch(downloadUrl, { signal: AbortSignal.timeout(60000) });
       const contentType = resp.headers.get('content-type') || '';
 
       // A JSON body means the API answered with an error (expired link, 403, …).
