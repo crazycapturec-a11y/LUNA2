@@ -48,7 +48,25 @@ test('does not visit an untrusted redirect from a TikTok short link', async (t) 
   const response = await lookup(req(link));
   assert.equal(response.status, 502);
   assert.ok(!(await response.text()).includes('127.0.0.1'));
-  assert.ok(calls.length >= 3);
+  // The lookup only ever fetches the short link and TikWM; the untrusted target is
+  // rejected by validation, never requested.
+  assert.ok(!calls.some((url) => url.includes('127.0.0.1')));
+  assert.ok(calls.length >= 2);
+});
+
+test('renders the preview from the TikTok page while TikWM is still hanging', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url).includes('tikwm.com')) return new Promise(() => {});
+    if (url === link) return new Response(null, { status: 302, headers: { location: video } });
+    return new Response(html(), { headers: { 'content-type': 'text/html' } });
+  });
+  const started = Date.now();
+  const response = await lookup(req(link));
+  const elapsed = Date.now() - started;
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).hdUrl, media);
+  // Must return on the hedge, not on TikWM's budget (TIKWM_BUDGET_MS = 2500).
+  assert.ok(elapsed < 2400, `lookup waited ${elapsed}ms instead of using the page`);
 });
 
 test('rejects deceptive submitted URLs and mismatched or untrusted media', async (t) => {
