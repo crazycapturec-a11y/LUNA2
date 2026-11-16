@@ -28,9 +28,59 @@ type DownloadResult = {
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const url: string = typeof body?.url === 'string' ? body.url : '';
+    const rawUrl: string = typeof body?.url === 'string' ? body.url : '';
 
-    let cleanUrl = normalizeInstagramPostUrl(url);
+    if (!rawUrl) {
+      return NextResponse.json({ error: 'Please provide a valid link.' }, { status: 400 });
+    }
+
+    // TikTok branch — keep Instagram untouched but allow direct TikTok via same endpoint
+    let isTikTok = false;
+    try {
+      const u = new URL(rawUrl);
+      const h = u.hostname.toLowerCase();
+      if (h === 'tiktok.com' || h.endsWith('.tiktok.com')) isTikTok = true;
+    } catch {}
+    if (!isTikTok && rawUrl.includes('tiktok.com')) isTikTok = true;
+
+    if (isTikTok) {
+      try {
+        const res = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(rawUrl)}&hd=1`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(8000),
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+            Accept: 'application/json',
+            Referer: 'https://www.tikwm.com/',
+          },
+        });
+        const data: any = await res.json().catch(() => null);
+        if (data?.code === 0 && data?.data) {
+          let hd = data.data.hdplay || data.data.play;
+          let music = data.data.music;
+          const cover = data.data.cover || data.data.origin_cover || '';
+          const title = data.data.title || '';
+          const author = data.data.author?.nickname || data.data.author?.unique_id || data.data.author || '';
+          if (typeof hd === 'string' && hd.startsWith('//')) hd = 'https:' + hd;
+          if (typeof music === 'string' && music.startsWith('//')) music = 'https:' + music;
+          if (hd) {
+            return NextResponse.json({
+              success: true,
+              mediaUrl: hd,
+              mp3Url: typeof music === 'string' ? music : null,
+              mediaType: 'video',
+              title: typeof title === 'string' ? title : '',
+              author: typeof author === 'string' ? author : '',
+              thumbnail: typeof cover === 'string' ? cover : '',
+            });
+          }
+        }
+      } catch {}
+      // fall through to Instagram error handling if TikWM fails — let tiktok/info handle it, but return helpful error
+      return NextResponse.json({ error: 'Could not extract TikTok video. Try via TikTok button or check link.' }, { status: 502 });
+    }
+
+    let cleanUrl = normalizeInstagramPostUrl(rawUrl);
     if (!cleanUrl) {
       return NextResponse.json(
         { error: 'Please provide a valid Instagram reel or post link.' },
@@ -60,8 +110,7 @@ export async function POST(request: Request) {
     }
     const hasSession = Boolean(auth.cookies || auth.sessionId);
 
-    // Keep primary extractor bounded so fallbacks (embed + 2026 GraphQL/Polaris)
-    // always have plenty of budget inside the 60-second serverless limit.
+    // Keep primary extractor bounded so fallbacks always have budget
     const ig = new ultraigdl({
       cache: false,
       retries: 1,
@@ -92,10 +141,6 @@ export async function POST(request: Request) {
     if (primary?.status === 200) return primary;
 
     const code = Number(result?.code);
-    // ultra-igdl returns `{ code: 403, message: 'Private account' }` whenever
-    // Instagram serves a generic "Log in to Instagram" HTML page — including for
-    // public posts accessed from cloud IPs or with an expired session. Allow
-    // first-party Instagram fallbacks to verify those before giving up.
     const isGenericLoginWall = code === 403 && result?.message === 'Private account';
 
     const embedAttempts: InstagramEmbedAttempt[] = [];
@@ -104,7 +149,6 @@ export async function POST(request: Request) {
     let gated = false;
 
     const logFailure = () => {
-      // Log fixed status metadata only — never the post URL, shortcode, session, or raw errors.
       console.info('[instagram] lookup failed', {
         primary: Number.isInteger(code) ? code : 'unknown',
         extractorFailed,
@@ -117,7 +161,7 @@ export async function POST(request: Request) {
     };
 
     if (code !== 429 && (code !== 403 || isGenericLoginWall)) {
-      // 1. Public captioned/plain embeds first (cookie-free, real iframe navigation headers).
+      // 1. Public embeds (cookie-free)
       const publicEmbed = await fetchInstagramEmbed(
         cleanUrl,
         {},
@@ -144,12 +188,7 @@ export async function POST(request: Request) {
         );
       }
 
-      // 2. Direct first-party 2026 Instagram lookup:
-      //    - authenticated api/v1/media/{pk}/info/ (if configured, with current X-ASBD-ID)
-      //    - anonymous web session + /api/graphql (shortcode + Polaris logged-out queries)
-      //    - anonymous permalink data-sjs extraction (with dynamic queryID recovery)
-      //    - anonymous mobile media info
-      //    - authenticated permalink data-sjs + /api/graphql (if session configured & valid)
+      // 2. Direct 2026 lookup
       const direct = await fetchInstagramDirect(cleanUrl, auth, (attempt) => directAttempts.push(attempt));
       sessionInvalid = direct.sessionInvalid;
       gated = direct.gated;
@@ -173,8 +212,7 @@ export async function POST(request: Request) {
         );
       }
 
-      // 3. Authenticated captioned/plain embeds only on Instagram (never following redirects),
-      //    skipped if the configured session was already rejected as expired/invalid.
+      // 3. Authenticated embeds (skip if session already invalid)
       if (hasSession && !sessionInvalid) {
         const authEmbed = await fetchInstagramEmbed(
           cleanUrl,
@@ -216,7 +254,6 @@ export async function POST(request: Request) {
 
     logFailure();
 
-    // Do not expose raw provider/network errors or credential values.
     if (code === 429) {
       return NextResponse.json(
         { error: 'Instagram is rate-limiting requests. Please try again later.' },
@@ -264,7 +301,6 @@ function buildResponse(result: DownloadResult, url: string) {
     instagramMediaUrl(item?.url),
   );
 
-  // A reel or TV video must not silently turn into a thumbnail/photo download.
   const target = parseInstagramPostTarget(url);
   const videoOnly = target ? target.videoOnly : /^\/(?:reel|tv)\//i.test(new URL(url).pathname);
 
