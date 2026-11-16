@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import { captureTikTokCookies } from './tiktok-session';
 
 const GENERIC_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
@@ -90,7 +91,7 @@ type Item = {
     cover?: unknown;
     originCover?: unknown;
     duration?: unknown;
-    bitrateInfo?: Array<{ CodecType?: unknown; PlayAddr?: { UrlList?: unknown } }>;
+    bitrateInfo?: Array<{ CodecType?: unknown; Bitrate?: unknown; PlayAddr?: { UrlList?: unknown } }>;
   };
   imagePost?: { images?: Array<{ imageURL?: { urlList?: unknown[] } }> };
   music?: { playUrl?: unknown };
@@ -112,7 +113,39 @@ export type DirectTikTokResult = {
   hd: string;
   sd: string;
   music: string;
+  /** Every playable URL for this item, best quality first (see collectVideoUrls). */
+  videoCandidates: string[];
 };
+
+/**
+ * TikTok publishes the same video at several URLs: a bitrate list, `downloadAddr`
+ * and `playAddr`. Any one of them can be refused for a given request, so collect
+ * all of them, deduplicated, with the highest bitrate first so "HD" really is the
+ * best file the site offers.
+ */
+function collectVideoUrls(item: Item): string[] {
+  const urls: string[] = [];
+  const add = (value: unknown) => {
+    const safe = safeMediaUrl(value);
+    if (safe && !urls.includes(safe)) urls.push(safe);
+  };
+
+  const bitrates = Array.isArray(item.video?.bitrateInfo) ? [...item.video.bitrateInfo] : [];
+  bitrates.sort((left, right) => {
+    const a = typeof left?.Bitrate === 'number' ? left.Bitrate : 0;
+    const b = typeof right?.Bitrate === 'number' ? right.Bitrate : 0;
+    return b - a;
+  });
+  for (const bitrate of bitrates) {
+    const list = bitrate?.PlayAddr?.UrlList;
+    if (!Array.isArray(list)) continue;
+    for (const url of list) add(url);
+  }
+
+  add(item.video?.downloadAddr);
+  add(item.video?.playAddr);
+  return urls;
+}
 
 function extractPostIdFromUrl(urlStr: string): string | null {
   try {
@@ -219,6 +252,10 @@ export async function fetchDirectTikTok(input: string): Promise<DirectTikTokResu
         return null;
       }
 
+      // Keep the visitor cookies this page was served with: TikTok's media CDN
+      // rejects the same video URLs without them.
+      captureTikTokCookies(response);
+
       // Short link without redirect but with HTML anchor (vt.tiktok.com behaviour)
       if (isShort) {
         const html = await limitedText(response);
@@ -254,24 +291,8 @@ export async function fetchDirectTikTok(input: string): Promise<DirectTikTokResu
       const item = parseItemFromHtml(html, postId);
       if (!item) return null;
 
-      // Prefer playAddr, fallback to downloadAddr, then bitrateInfo
-      let sd = safeMediaUrl(item.video?.playAddr) || safeMediaUrl(item.video?.downloadAddr);
-      if (!sd && Array.isArray(item.video?.bitrateInfo)) {
-        for (const b of item.video.bitrateInfo) {
-          const list = (b as { PlayAddr?: { UrlList?: unknown[] } })?.PlayAddr?.UrlList;
-          if (Array.isArray(list)) {
-            for (const u of list) {
-              const cand = safeMediaUrl(u);
-              if (cand) {
-                sd = cand;
-                break;
-              }
-            }
-            if (sd) break;
-          }
-        }
-      }
-      if (!sd) return null;
+      const videoCandidates = collectVideoUrls(item);
+      if (videoCandidates.length === 0) return null;
 
       // For image posts, we still return video url as hd/sd if available, but handle missing
       return {
@@ -280,9 +301,10 @@ export async function fetchDirectTikTok(input: string): Promise<DirectTikTokResu
         author: typeof item.author?.uniqueId === 'string' ? item.author.uniqueId : typeof item.author?.nickname === 'string' ? item.author.nickname : 'tiktok',
         thumbnail: safeMediaUrl(item.video?.originCover) || safeMediaUrl(item.video?.cover),
         duration: typeof item.video?.duration === 'number' ? item.video.duration : undefined,
-        hd: sd,
-        sd,
+        hd: videoCandidates[0],
+        sd: videoCandidates[1] ?? videoCandidates[0],
         music: safeMediaUrl(item.music?.playUrl),
+        videoCandidates,
       };
     }
   } catch {
