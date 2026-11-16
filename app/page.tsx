@@ -343,7 +343,28 @@ export default function Home() {
       showToast(`${label} download started ✓`);
       return;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Download failed. Try again.';
+      const raw = err instanceof Error ? err.message : 'Download failed. Try again.';
+      // If the relay is blocked (403 from CDN on the server's IP), the user's
+      // own IP is often not blocked — open the direct CDN URL as fallback.
+      if (/403|media source/i.test(raw)) {
+        try {
+          const original = new URL(downloadUrl, window.location.origin).searchParams.get('url');
+          if (original) {
+            const host = new URL(original).hostname.toLowerCase();
+            const allowed = [
+              'tiktokcdn.com','tiktokcdn-us.com','tiktokcdn-eu.com','tiktokv.com','tiktokv.us','tiktok.com','tikwm.com','byteoversea.com','ibytedtos.com','muscdn.com','musical.ly','cdninstagram.com','fbcdn.net','instagram.com'
+            ].some(s => host === s || host.endsWith('.'+s));
+            if (allowed) {
+              showToast('Server blocked (403) — opening direct file in new tab…');
+              window.open(original, '_blank', 'noopener');
+              setProgress({ show: true, label: 'Opened direct file — check new tab.', pct: 100 });
+              setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
+              return;
+            }
+          }
+        } catch {}
+      }
+      const message = raw;
       setProgress({ show: false, label: '', pct: 0 });
       showToast(message);
       setError(message);

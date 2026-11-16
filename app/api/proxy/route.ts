@@ -103,6 +103,21 @@ export async function GET(request: NextRequest) {
     Accept: inlineImage ? 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' : '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
     Referer: isInstagramHost ? 'https://www.instagram.com/' : isTikwmHost ? 'https://www.tikwm.com/' : 'https://www.tiktok.com/',
+    // Help TikTok CDN allowlist checks — mimic real browser navigation for video/image
+    ...(isTikTokHost && !inlineImage
+      ? {
+          'Sec-Fetch-Dest': 'video',
+          'Sec-Fetch-Mode': 'no-cors',
+          'Sec-Fetch-Site': 'same-site',
+        }
+      : {}),
+    ...(isTikTokHost && inlineImage
+      ? {
+          'Sec-Fetch-Dest': 'image',
+          'Sec-Fetch-Mode': 'no-cors',
+          'Sec-Fetch-Site': 'same-site',
+        }
+      : {}),
   };
 
   try {
@@ -125,6 +140,9 @@ export async function GET(request: NextRequest) {
           { ...baseHeaders, Origin: 'https://www.tiktok.com', Range: 'bytes=0-' },
           // Some edges want a tiktok web cookie hint
           { ...baseHeaders, Referer: 'https://m.tiktok.com/' },
+          // Some tiktokcdn edges accept no-referer or tikwm referer when server IP is flagged
+          { ...baseHeaders, Referer: 'https://www.tikwm.com/' },
+          { ...baseHeaders, Referer: '' },
         );
       } else {
         // For Instagram / tikwm just try Range once
