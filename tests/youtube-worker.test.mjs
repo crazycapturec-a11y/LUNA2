@@ -57,6 +57,11 @@ test('worker protects jobs, creates a bounded job, and serves only signed downlo
   assert.equal(download.status, 200);
   assert.match(download.headers.get('content-disposition'), /^attachment/);
   assert.equal(await download.text(), 'fake video bytes');
+  const ranged = await fetch(data.downloadUrl, { headers: { range: 'bytes=0-3' } });
+  assert.equal(ranged.status, 206);
+  assert.equal(ranged.headers.get('content-range'), 'bytes 0-3/16');
+  assert.equal(await ranged.text(), 'fake');
+  assert.equal((await fetch(data.downloadUrl, { headers: { range: 'bytes=99-' } })).status, 416);
   const expired = new URL(data.downloadUrl);
   expired.searchParams.set('expires', '1');
   assert.equal((await fetch(expired)).status, 404);
