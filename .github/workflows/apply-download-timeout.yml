@@ -1,0 +1,26 @@
+name: apply-download-timeout
+on:
+  push:
+    branches: [fix/download-timeout]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/download-timeout
+          fetch-depth: 0
+      - name: Apply the download timeout patch
+        run: |
+          set -euo pipefail
+          git config user.name "LUNA fix bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git apply --ignore-whitespace --verbose download-timeout.patch
+          test "$(git hash-object app/page.tsx)" = "a2fd9bf7b47e0088d57115e2fea2699c40a4622f"
+          git rm -q download-timeout.patch .github/workflows/apply-download-timeout.yml
+          git add app/page.tsx
+          git commit -m "fix: stop aborting large downloads at 60 seconds"
+          git push origin HEAD:fix/download-timeout
