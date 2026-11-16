@@ -49,6 +49,12 @@ const I18N: Record<string, Record<string, string>> = {
   }
 };
 
+/** Source APIs sometimes return a handle with the @ already on it — never render "@@user". */
+const formatAuthor = (author: string) => {
+  const handle = (author || '').trim().replace(/^@+/, '');
+  return handle ? `@${handle}` : '';
+};
+
 export default function Home() {
   const [platform, setPlatform] = useState<Platform>('TikTok');
   const [url, setUrl] = useState('');
@@ -67,6 +73,10 @@ export default function Home() {
   
   const [toast, setToast] = useState<string | null>(null);
   const [progress, setProgress] = useState<{show: boolean, label: string, pct: number | null}>({ show: false, label: '', pct: 0 });
+  // progress.show also stays true for a moment after a download finishes so the
+  // confirmation stays readable; gating the buttons on it left them dead for ~3 s.
+  // Only a real in-flight download disables the UI.
+  const [busy, setBusy] = useState(false);
 
   const WHATSAPP_NUM = "94742108549";
   const t = I18N[lang];
@@ -203,11 +213,12 @@ export default function Home() {
         const shortCaption = rawCaption
           ? rawCaption.split('\n')[0].slice(0, 100)
           : '';
+        // Store the bare handle: the view adds the "@" once, so this cannot
+        // render "@@username" when the API already includes one.
         const rawAuthor =
           (typeof data.author === 'string' && data.author.trim()) ||
-          (typeof data.username === 'string' && data.username.trim()
-            ? `@${data.username.trim().replace(/^@/, '')}`
-            : '');
+          (typeof data.username === 'string' && data.username.trim()) ||
+          '';
 
         const newResult: MediaResult = {
           platform: 'Instagram',
@@ -264,8 +275,9 @@ export default function Home() {
       return;
     }
 
-    if (progress.show) return; // one download at a time
+    if (busy) return; // one download at a time
     setProgress({ show: true, label: `Preparing ${label}…`, pct: null });
+    setBusy(true);
 
     const saveBlob = (blob: Blob, fallbackName: string) => {
       const objUrl = URL.createObjectURL(blob);
@@ -415,6 +427,7 @@ export default function Home() {
       setError(message);
       setShowSupport(true);
     } finally {
+      setBusy(false);
       if (stallTimer) clearTimeout(stallTimer);
       // Small delay so "Saved ✓" stays readable; errors clear earlier above.
       setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
@@ -422,9 +435,10 @@ export default function Home() {
   };
 
   const startWorkerDownload = async (videoUrl: string) => {
-    if (progress.show) return;
+    if (busy) return;
     setError(null);
     setProgress({ show: true, label: 'Preparing video and audio — this may take several minutes…', pct: null });
+    setBusy(true);
     try {
       const created = await fetch('/api/youtube/jobs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: videoUrl }),
@@ -452,6 +466,7 @@ export default function Home() {
       setShowSupport(true);
       showToast(message);
     } finally {
+      setBusy(false);
       setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
     }
   };
@@ -534,13 +549,13 @@ export default function Home() {
           <p className="hero-sub">{t.heroSub}</p>
 
           <div className="platform-switch" role="group" aria-label="Choose platform">
-            <button className={`platform-btn ${platform === 'TikTok' ? 'active' : ''}`} data-platform="TikTok" type="button" disabled={isLoading || progress.show} aria-pressed={platform === 'TikTok'} onClick={() => selectPlatform('TikTok')}>
+            <button className={`platform-btn ${platform === 'TikTok' ? 'active' : ''}`} data-platform="TikTok" type="button" disabled={isLoading || busy} aria-pressed={platform === 'TikTok'} onClick={() => selectPlatform('TikTok')}>
               <span>TikTok</span><small>Videos</small>
             </button>
-            <button className={`platform-btn ${platform === 'Instagram' ? 'active' : ''}`} data-platform="Instagram" type="button" disabled={isLoading || progress.show} aria-pressed={platform === 'Instagram'} onClick={() => selectPlatform('Instagram')}>
+            <button className={`platform-btn ${platform === 'Instagram' ? 'active' : ''}`} data-platform="Instagram" type="button" disabled={isLoading || busy} aria-pressed={platform === 'Instagram'} onClick={() => selectPlatform('Instagram')}>
               <span>Instagram</span><small>Reels</small>
             </button>
-            <button className={`platform-btn ${platform === 'YouTube' ? 'active' : ''}`} data-platform="YouTube" type="button" disabled={isLoading || progress.show} aria-pressed={platform === 'YouTube'} onClick={() => selectPlatform('YouTube')}>
+            <button className={`platform-btn ${platform === 'YouTube' ? 'active' : ''}`} data-platform="YouTube" type="button" disabled={isLoading || busy} aria-pressed={platform === 'YouTube'} onClick={() => selectPlatform('YouTube')}>
               <span>YouTube</span><small>HD Video</small>
             </button>
           </div>
@@ -557,13 +572,13 @@ export default function Home() {
             <div className="bar">
               <div className={`field ${detectedLink ? 'valid' : ''}`}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
-                <input type="text" inputMode="url" autoComplete="off" aria-label="Video link or share text" value={url} onChange={(e) => updateUrl(e.target.value)} placeholder={placeholder} disabled={isLoading || progress.show} />
-                <button type="button" className="btn btn-paste" onClick={handlePaste} disabled={isLoading || progress.show}>
+                <input type="text" inputMode="url" autoComplete="off" aria-label="Video link or share text" value={url} onChange={(e) => updateUrl(e.target.value)} placeholder={placeholder} disabled={isLoading || busy} />
+                <button type="button" className="btn btn-paste" onClick={handlePaste} disabled={isLoading || busy}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="8" y="2.5" width="8" height="4" rx="1.5"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5v14A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5v-14A1.5 1.5 0 0 1 5.5 4H8"/></svg>
                   {t.paste}
                 </button>
               </div>
-              <button type="submit" className={`btn btn-download ${detectedLink ? 'ready' : ''}`} disabled={isLoading || progress.show}>
+              <button type="submit" className={`btn btn-download ${detectedLink ? 'ready' : ''}`} disabled={isLoading || busy}>
                 {isLoading ? 'Fetching...' : (
                   <>
                     <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
@@ -593,7 +608,7 @@ export default function Home() {
             <span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Audio when available</span>
           </div>
           <p className="permission" dangerouslySetInnerHTML={{__html: t.permission}} />
-          <p className="sample-line">No link handy? <button type="button" onClick={() => updateUrl(sampleUrl)} disabled={isLoading || progress.show}>Try a sample {platform} video →</button></p>
+          <p className="sample-line">No link handy? <button type="button" onClick={() => updateUrl(sampleUrl)} disabled={isLoading || busy}>Try a sample {platform} video →</button></p>
 
           {isLoading && (
             <div className="skeleton show" role="status" aria-label="Fetching media details">
@@ -617,18 +632,18 @@ export default function Home() {
                 <div>
                   <div className="source"><span>{result.platform} {result.isImage ? 'Photo' : 'Video'}</span></div>
                   <h3 className="r-title">{result.title}</h3>
-                  <p className="r-author">@{result.author}</p>
+                  <p className="r-author">{formatAuthor(result.author)}</p>
                   
                   <div className="dl-actions">
                     {result.platform === 'YouTube' ? (
-                      <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={progress.show}>
+                      <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={busy}>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
                         <span className="grow"><span className="label">Download Video</span><span className="sub">Available format</span></span>
                         <span className="tag">MP4</span>
                       </button>
                     ) : (
                       <>
-                        <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={progress.show}>
+                        <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={busy}>
                           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
                           <span className="grow">
                             <span className="label">
@@ -645,14 +660,14 @@ export default function Home() {
                           <span className="tag">{result.isImage ? 'JPG' : 'MP4'}</span>
                         </button>
                         {result.downloads?.sd && (
-                        <button className="btn dl-btn" onClick={() => startDownload('sd')} disabled={progress.show}>
+                        <button className="btn dl-btn" onClick={() => startDownload('sd')} disabled={busy}>
                           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
                           <span className="grow"><span className="label">Download SD</span><span className="sub">Smaller file</span></span>
                           <span className="tag">MP4</span>
                         </button>
                         )}
                         {result.downloads?.mp3 && (
-                          <button className="btn dl-btn" onClick={() => startDownload('mp3')} disabled={progress.show}>
+                          <button className="btn dl-btn" onClick={() => startDownload('mp3')} disabled={busy}>
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>
                             <span className="grow"><span className="label">Download MP3</span><span className="sub">Audio only</span></span>
                             <span className="tag">MP3</span>
@@ -671,7 +686,7 @@ export default function Home() {
                     </div>
                   )}
 
-                  <button className="again" disabled={progress.show} onClick={() => { updateUrl(''); setProgress({show: false, label: '', pct: 0}); }}>↺&nbsp; Download another video</button>
+                  <button className="again" disabled={busy} onClick={() => { updateUrl(''); setProgress({show: false, label: '', pct: 0}); }}>↺&nbsp; Download another video</button>
                 </div>
               </div>
             </div>
@@ -686,7 +701,7 @@ export default function Home() {
             </div>
             <div className="history-grid">
               {history.map((item, i) => (
-                <button key={i} className="hist-card" disabled={isLoading || progress.show} onClick={() => { updateUrl(item.url); showToast('Link restored — fetch it again for fresh download links.'); window.scrollTo({top: 0, behavior: 'smooth'}); }}>
+                <button key={i} className="hist-card" disabled={isLoading || busy} onClick={() => { updateUrl(item.url); showToast('Link restored — fetch it again for fresh download links.'); window.scrollTo({top: 0, behavior: 'smooth'}); }}>
                   {item.thumbnail ? <img src={item.thumbnail} alt="" /> : <div style={{ aspectRatio: '4/3', background: 'var(--bg-3)' }}></div>}
                   <div className="hc-body">
                     <div className="hc-title">{item.title}</div>
