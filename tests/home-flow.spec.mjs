@@ -45,9 +45,11 @@ test('switches platform from pasted URL and restores history without reusing exp
   assert.equal(screen.queryByRole('button', { name: /Download Video/ }), null);
   assert.ok(screen.getByText(/fetch it again for fresh download links/i));
   const input = screen.getByRole('textbox', { name: 'Video link or share text' });
-  fireEvent.change(input, { target: { value: 'https://youtu.be/cpUxjLKPkLI' } });
-  assert.equal(screen.getByRole('button', { name: /YouTube HD Video/ }).getAttribute('aria-pressed'), 'true');
-  assert.ok(screen.getByText('YouTube link detected'));
+  fireEvent.change(input, { target: { value: 'https://www.instagram.com/reel/XYZ789/' } });
+  assert.equal(screen.getByRole('button', { name: /Instagram Reels/ }).getAttribute('aria-pressed'), 'true');
+  assert.ok(screen.getByText('Instagram link detected'));
+  // YouTube is no longer offered anywhere in the UI.
+  assert.equal(screen.queryByRole('button', { name: /YouTube/i }), null);
 });
 
 test('rejects deceptive links without making a lookup', async (t) => {
@@ -57,6 +59,6 @@ test('rejects deceptive links without making a lookup', async (t) => {
   render(React.createElement(Home));
   fireEvent.change(screen.getByRole('textbox', { name: 'Video link or share text' }), { target: { value: 'https://tiktok.com.evil.example/video' } });
   fireEvent.click(screen.getByRole('button', { name: 'Download', exact: true }));
-  assert.ok(screen.getByRole('alert').textContent.includes('TikTok, Instagram or YouTube'));
+  assert.ok(screen.getByRole('alert').textContent.includes('TikTok or Instagram'));
   assert.equal(fetchMock.mock.callCount(), 0);
 });
