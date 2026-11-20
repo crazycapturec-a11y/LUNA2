@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { findSupportedLink, type Platform } from './lib/platform-url';
 
-type MediaResult = { platform: Platform; worker?: boolean; title: string; author: string; thumbnail: string; downloads: { hd: string | null; sd: string | null; mp3: string | null }; isImage?: boolean; url: string };
+type MediaResult = { platform: Platform; title: string; author: string; thumbnail: string; downloads: { hd: string | null; sd: string | null; mp3: string | null }; isImage?: boolean; url: string };
 type HistoryItem = Pick<MediaResult, 'platform' | 'title' | 'author' | 'thumbnail' | 'url'>;
 
 /** Abort a download only when it genuinely stalls: no bytes received for this long. */
@@ -12,16 +12,16 @@ const STALL_TIMEOUT_MS = 30_000;
 
 const I18N: Record<string, Record<string, string>> = {
   en: { name: "English", navHow: "How it works", navFaq: "FAQ", badge: "100% free · No sign-up needed",
-    heroTitle: 'Download TikTok, Instagram & YouTube. <span class="grad">Free.</span>',
+    heroTitle: 'Download TikTok & Instagram. <span class="grad">Free.</span>',
     heroSub: "Paste a link, find available formats, and save media right from your browser.",
-    placeholder: "Paste a TikTok, Instagram, or YouTube link here…", paste: "Paste", download: "Download",
+    placeholder: "Paste a TikTok or Instagram link here…", paste: "Paste", download: "Download",
     trust1: "No sign-up", trust2: "HD quality", trust3: "Works on any device",
     permission: "<strong>Please note:</strong> Only download videos you have permission to save.",
     howKicker: "Simple by design", howTitle: "How it works", howSub: "Three steps. No apps to install, no account to create.",
     featuresTitle: "Made to feel effortless", faqTitle: "Frequently asked questions"
   },
   es: { name: "Español", navHow: "Cómo funciona", navFaq: "Preguntas", badge: "100% gratis · Sin registro",
-    heroTitle: 'Descarga videos de TikTok, Instagram y YouTube. <span class="grad">Gratis.</span>',
+    heroTitle: 'Descarga videos de TikTok e Instagram. <span class="grad">Gratis.</span>',
     heroSub: "Pega un enlace, toca Descargar y guárdalo en HD en segundos.",
     placeholder: "Pega un enlace aquí…", paste: "Pegar", download: "Descargar",
     trust1: "Sin registro", trust2: "Calidad HD", trust3: "En cualquier dispositivo",
@@ -30,7 +30,7 @@ const I18N: Record<string, Record<string, string>> = {
     featuresTitle: "Hecho para ser fácil", faqTitle: "Preguntas frecuentes"
   },
   pt: { name: "Português", navHow: "Como funciona", navFaq: "Perguntas", badge: "100% grátis · Sem cadastro",
-    heroTitle: 'Baixe vídeos do TikTok, Instagram e YouTube. <span class="grad">Grátis.</span>',
+    heroTitle: 'Baixe vídeos do TikTok e Instagram. <span class="grad">Grátis.</span>',
     heroSub: "Cole um link, toque em Baixar e salve em HD em segundos.",
     placeholder: "Cole aqui um link…", paste: "Colar", download: "Baixar",
     trust1: "Sem cadastro", trust2: "Qualidade HD", trust3: "Em qualquer dispositivo",
@@ -39,7 +39,7 @@ const I18N: Record<string, Record<string, string>> = {
     featuresTitle: "Feito para ser fácil", faqTitle: "Perguntas frequentes"
   },
   si: { name: "සිංහල", navHow: "ක්‍රියා කරන ආකාරය", navFaq: "නිතර ප්‍රශ්න", badge: "100% නොමිලේ · ලියාපදිංචිය අනවශ්‍යයි",
-    heroTitle: 'TikTok, Instagram සහ YouTube වීඩියෝ බාගත කරන්න. <span class="grad">නොමිලේ.</span>',
+    heroTitle: 'TikTok සහ Instagram වීඩියෝ බාගත කරන්න. <span class="grad">නොමිලේ.</span>',
     heroSub: "සබැඳිය අලවන්න, බාගත කරන්න තට්ටු කරන්න, තත්පර කිහිපයකින් HD වලින් සුරකින්න.",
     placeholder: "සබැඳිය මෙහි අලවන්න…", paste: "අලවන්න", download: "බාගත කරන්න",
     trust1: "ලියාපදිංචිය නැත", trust2: "HD තත්ත්වය", trust3: "ඕනෑම උපාංගයක ක්‍රියා කරයි",
@@ -166,7 +166,7 @@ export default function Home() {
 
     const link = findSupportedLink(url);
     if (!link) {
-      setError('Please enter a TikTok, Instagram or YouTube link.');
+      setError('Please enter a TikTok or Instagram link.');
       setIsLoading(false);
       setShowSupport(true);
       return;
@@ -176,31 +176,7 @@ export default function Home() {
     setPlatform(platform);
     setUrl(cleanUrl);
     try {
-      if (platform === 'YouTube') {
-        const res = await fetch(`/api/youtube/info?url=${encodeURIComponent(cleanUrl)}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to fetch YouTube video.');
-
-        const newResult: MediaResult = {
-          platform: 'YouTube',
-          worker: data.worker === true,
-          title: data.title,
-          author: data.author,
-          thumbnail: data.thumbnail,
-          // YouTube stream URLs are IP-bound and expire, so all downloads go through
-          // our own API, which resolves + streams the file server-side.
-          downloads: {
-            hd: `/api/youtube/download?url=${encodeURIComponent(data.url || cleanUrl)}&kind=video`,
-            sd: null,
-            // Same route with kind=audio returns the m4a audio stream.
-            mp3: `/api/youtube/download?url=${encodeURIComponent(data.url || cleanUrl)}&kind=audio`,
-          },
-          url: cleanUrl,
-        };
-        setResult(newResult);
-        saveToHistory(newResult);
-        if (data.warning) showToast('Preview ready — the download may need a retry.');
-      } else if (platform === 'Instagram') {
+      if (platform === 'Instagram') {
         const res = await fetch('/api/download', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -278,9 +254,8 @@ export default function Home() {
   /**
    * Streams a file from one of our own API routes and saves it to the device.
    *
-   * Why not just `window.open(mediaUrl)`: CDN links have no CORS headers, YouTube
-   * links are IP-bound, and a plain navigation opens a video player instead of
-   * saving a file. Our API routes reply with Content-Disposition: attachment, and
+   * Why not just `window.open(mediaUrl)`: CDN links have no CORS headers, and a
+   * plain navigation opens a video player instead of saving a file. Our API routes reply with Content-Disposition: attachment, and
    * we pull the bytes here so the user gets real progress + real error messages.
    */
   const downloadFile = async (downloadUrl: string | null, filename: string, label: string) => {
@@ -448,50 +423,9 @@ export default function Home() {
     }
   };
 
-  const startWorkerDownload = async (videoUrl: string) => {
-    if (busy) return;
-    setError(null);
-    setProgress({ show: true, label: 'Preparing video and audio — this may take several minutes…', pct: null });
-    setBusy(true);
-    try {
-      const created = await fetch('/api/youtube/jobs', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: videoUrl }),
-      });
-      const job = await created.json();
-      if (!created.ok) throw new Error(job.error || 'Could not start the download.');
-      const deadline = Date.now() + 16 * 60 * 1000;
-      while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-        const response = await fetch(`/api/youtube/jobs?id=${encodeURIComponent(job.id)}`, { cache: 'no-store' });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Could not check the download.');
-        if (data.status === 'failed') throw new Error(data.error || 'The download could not be prepared.');
-        if (data.status === 'ready' && data.downloadUrl) {
-          setProgress({ show: true, label: 'Ready — handing the file to your browser…', pct: 100 });
-          window.location.assign(data.downloadUrl);
-          showToast('Download handed to your browser.');
-          return;
-        }
-      }
-      throw new Error('Preparing the download took too long. Please try again.');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Download failed. Please try again.';
-      setError(message);
-      setShowSupport(true);
-      showToast(message);
-    } finally {
-      setBusy(false);
-      setTimeout(() => setProgress({ show: false, label: '', pct: 0 }), 3200);
-    }
-  };
-
   const startDownload = (quality: 'hd' | 'sd' | 'mp3') => {
     if (!result?.downloads) {
       showToast('Download link missing — fetch the video again.');
-      return;
-    }
-    if (result.platform === 'YouTube' && result.worker && quality === 'hd') {
-      void startWorkerDownload(result.url);
       return;
     }
     const label = quality === 'mp3' ? 'MP3' : quality.toUpperCase();
@@ -501,10 +435,10 @@ export default function Home() {
   };
 
   const prep = platform === 'Instagram' ? 'an' : 'a';
-  const placeholder = t.placeholder.replace('TikTok, Instagram, or YouTube', platform);
+  const placeholder = t.placeholder.replace('TikTok or Instagram', platform);
   const detectedLink = findSupportedLink(url);
   const step = result ? 3 : isLoading ? 2 : 1;
-  const sampleUrl = platform === 'Instagram' ? 'https://www.instagram.com/reel/DfEUfYFsFVS/' : platform === 'YouTube' ? 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' : 'https://www.tiktok.com/@tiktok/video/7106594312292453675';
+  const sampleUrl = platform === 'Instagram' ? 'https://www.instagram.com/reel/DfEUfYFsFVS/' : 'https://www.tiktok.com/@tiktok/video/7106594312292453675';
 
   return (
     <>
@@ -568,9 +502,6 @@ export default function Home() {
             </button>
             <button className={`platform-btn ${platform === 'Instagram' ? 'active' : ''}`} data-platform="Instagram" type="button" disabled={isLoading || busy} aria-pressed={platform === 'Instagram'} onClick={() => selectPlatform('Instagram')}>
               <span>Instagram</span><small>Reels</small>
-            </button>
-            <button className={`platform-btn ${platform === 'YouTube' ? 'active' : ''}`} data-platform="YouTube" type="button" disabled={isLoading || busy} aria-pressed={platform === 'YouTube'} onClick={() => selectPlatform('YouTube')}>
-              <span>YouTube</span><small>HD Video</small>
             </button>
           </div>
           <p className="platform-hint">{detectedLink ? `${detectedLink.platform} link detected` : `${platform} selected — paste ${prep} ${platform} link below.`}</p>
@@ -649,23 +580,6 @@ export default function Home() {
                   <p className="r-author">{formatAuthor(result.author)}</p>
                   
                   <div className="dl-actions">
-                    {result.platform === 'YouTube' ? (
-                      <>
-                        <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={busy}>
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
-                          <span className="grow"><span className="label">Download Video</span><span className="sub">Available format</span></span>
-                          <span className="tag">MP4</span>
-                        </button>
-                        {result.downloads?.mp3 && (
-                          <button className="btn dl-btn" onClick={() => startDownload('mp3')} disabled={busy}>
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>
-                            <span className="grow"><span className="label">Download Audio</span><span className="sub">Audio only</span></span>
-                            <span className="tag">M4A</span>
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <>
                         <button className="btn dl-btn primary" onClick={() => startDownload('hd')} disabled={busy}>
                           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"><path d="M12 3v11m0 0 4.5-4.5M12 14 7.5 9.5"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13A1.5 1.5 0 0 0 20 19.5V17"/></svg>
                           <span className="grow">
@@ -696,8 +610,6 @@ export default function Home() {
                             <span className="tag">MP3</span>
                           </button>
                         )}
-                      </>
-                    )}
                   </div>
 
                   {progress.show && (
@@ -781,11 +693,10 @@ export default function Home() {
           <div className="section-head">
             <div className="kicker">One bar, many places</div>
             <h2>Supported sites</h2>
-            <p>Built for TikTok, Instagram & YouTube.</p>
+            <p>Built for TikTok &amp; Instagram.</p>
           </div>
           <div className="supported-grid">
             <span className="chip"><strong>TikTok</strong></span><span className="chip"><strong>Instagram</strong></span>
-            <span className="chip"><strong>YouTube</strong></span>
           </div>
           <p style={{ textAlign: 'center', color: 'var(--faint)', fontSize: '.85rem', marginTop: '18px' }}>All names above are trademarks of their respective owners. LUNA is not affiliated with any of them.</p>
         </section>
@@ -801,7 +712,6 @@ export default function Home() {
               { q: "Is LUNA really free?", a: "Yes — free, with no sign-up, no app install and no daily limits. It runs entirely in your browser plus a small open backend you can even host yourself." },
               { q: "Is it safe?", a: "Yes. LUNA never asks for your TikTok or Instagram password — any site that does is a red flag. We also don't store downloaded videos." },
               { q: "Where are my files saved?", a: "Your device's default download location. On Android that's usually Downloads or your gallery; on iPhone check the Files app → Downloads." },
-              { q: "Why did my YouTube link fail?", a: "YouTube has strict bot protection. If it fails, try a different video, or contact us via WhatsApp." },
               { q: "Can I download private videos?", a: "Availability depends on the source and server configuration. Only download media you have permission to save." },
               { q: "Can I install LUNA like an app?", a: "You can add LUNA to your home screen using your browser’s Share or menu options." }
             ].map((item, i) => (
@@ -831,7 +741,7 @@ export default function Home() {
           <div className="footer-grid">
             <div>
               <a className="logo" href="#"><span className="crescent"><svg width="21" height="21" viewBox="0 0 24 24" fill="none"><path d="M20.2 14.2A8.5 8.5 0 1 1 9.8 3.8a7 7 0 1 0 10.4 10.4Z" fill="#FFE9A8"/></svg></span><span>LUNA</span></a>
-              <p className="footer-note">A simple, free way to save TikTok, Instagram and YouTube videos in HD — plus MP3s.</p>
+              <p className="footer-note">A simple, free way to save TikTok and Instagram videos in HD — plus MP3s.</p>
               <div className="status-line"><span className="status-dot online"></span><span>Downloads depend on source availability</span></div>
             </div>
             <nav className="footer-links">
@@ -842,7 +752,7 @@ export default function Home() {
           </div>
           <div className="legal">
             <span>© 2024 LUNA. All rights reserved.</span>
-            <span>LUNA is not affiliated with TikTok, Instagram, YouTube or any platform listed.</span>
+            <span>LUNA is not affiliated with TikTok, Instagram or any platform listed.</span>
           </div>
         </div>
       </footer>

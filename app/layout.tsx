@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "LUNA | Video saver",
-  description: "Save available videos from TikTok, Instagram and YouTube in a few simple steps.",
+  description: "Save available videos from TikTok and Instagram in a few simple steps.",
 };
 
 // Typed explicitly instead of relying on the generated `LayoutProps` type, which

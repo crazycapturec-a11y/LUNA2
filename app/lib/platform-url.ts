@@ -1,4 +1,4 @@
-export type Platform = 'TikTok' | 'Instagram' | 'YouTube';
+export type Platform = 'TikTok' | 'Instagram';
 
 /** Extract a supported URL from either a link or a typical share message. */
 export function findSupportedLink(input: string): { platform: Platform; url: string } | null {
@@ -12,10 +12,9 @@ export function findSupportedLink(input: string): { platform: Platform; url: str
       let platform: Platform | null = null;
       if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) platform = 'TikTok';
       else if (['instagram.com', 'www.instagram.com', 'm.instagram.com', 'instagr.am', 'www.instagr.am'].includes(host)) platform = 'Instagram';
-      else if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be', 'www.youtu.be'].includes(host)) platform = 'YouTube';
       if (!platform) continue;
-      // The TikTok lookup requires HTTPS; Instagram also normalizes to HTTPS.
-      if (platform !== 'YouTube') url.protocol = 'https:';
+      // The TikTok and Instagram lookups both require HTTPS.
+      url.protocol = 'https:';
       url.hash = '';
       return { platform, url: url.href };
     } catch {
