@@ -1,0 +1,31 @@
+name: apply-remove-youtube
+on:
+  push:
+    branches: [remove-youtube]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: remove-youtube
+          fetch-depth: 0
+      - name: Apply the YouTube removal patch
+        run: |
+          set -euo pipefail
+          git config user.name "LUNA fix bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git apply --ignore-whitespace --verbose remove-youtube.patch
+          test "$(git hash-object app/page.tsx)" = "9b42c10037f3e4f7d07182abb88d8122694eac20"
+          test "$(git hash-object app/lib/platform-url.ts)" = "94cdab20865e08e4fa3800682e490a5b0e7f5ab3"
+          test "$(git hash-object app/layout.tsx)" = "03df17b475c6858457bef7e615f74e53b083de6f"
+          test "$(git hash-object app/globals.css)" = "7358c5fc75d85f69a49d633697554a3209a9c138"
+          test "$(git hash-object tests/platform-url.test.mjs)" = "aeb1b6a996a14a70f8b68a13dae16a1689ef50f9"
+          test "$(git hash-object tests/home-flow.spec.mjs)" = "a280bb5404e3e216793eaba2b9c848981b6f7250"
+          git rm -q remove-youtube.patch .github/workflows/apply-remove-youtube.yml
+          git add app tests
+          git commit -m "feat: remove YouTube from the site"
+          git push origin HEAD:remove-youtube
