@@ -1,0 +1,174 @@
+diff --git a/app/api/proxy/route.ts b/app/api/proxy/route.ts
+index 99eafe8..dc40bc8 100644
+--- a/app/api/proxy/route.ts
++++ b/app/api/proxy/route.ts
+@@ -19,6 +19,7 @@ export const dynamic = 'force-dynamic';
+  * the visitor cookies captured from the TikTok page itself.
+  */
+ 
++/** Domains that get the matching Referer/cookies. Broader than the fetch allowlist. */
+ const INSTAGRAM_HOST_SUFFIXES = ['cdninstagram.com', 'fbcdn.net', 'instagram.com'];
+ const TIKTOK_HOST_SUFFIXES = [
+   'tiktokcdn.com',
+@@ -32,7 +33,32 @@ const TIKTOK_HOST_SUFFIXES = [
+   'muscdn.com',
+   'musical.ly',
+ ];
+-const ALLOWED_HOST_SUFFIXES = [...INSTAGRAM_HOST_SUFFIXES, ...TIKTOK_HOST_SUFFIXES, 'tikwm.com'];
++/**
++ * Hosts we actually fetch media from. Page hosts (`www.instagram.com`,
++ * `www.tiktok.com`) are deliberately absent: they only serve HTML, and allowing
++ * them would turn this route into a general-purpose relay for any profile or
++ * post URL.
++ */
++const INSTAGRAM_MEDIA_HOSTS = ['cdninstagram.com', 'fbcdn.net'];
++const TIKTOK_MEDIA_HOSTS = [
++  'tiktokcdn.com',
++  'tiktokcdn-us.com',
++  'tiktokcdn-eu.com',
++  'tiktokv.com',
++  'tiktokv.us',
++  'byteoversea.com',
++  'ibytedtos.com',
++  'muscdn.com',
++  'musical.ly',
++];
++/** tikwm answers with `/video/...` paths that only resolve on its own domain. */
++const TIKWM_MEDIA_HOSTS = ['tikwm.com'];
++const MEDIA_HOST_SUFFIXES = [...INSTAGRAM_MEDIA_HOSTS, ...TIKTOK_MEDIA_HOSTS, ...TIKWM_MEDIA_HOSTS];
++/**
++ * TikTok's video edges live on tiktok.com itself (`v16-webapp-prime.us.tiktok.com`),
++ * so keep those while rejecting page hosts under the same domain.
++ */
++const TIKTOK_WEB_MEDIA_HOST = /^v\d+-[a-z0-9-]*webapp[a-z0-9-]*\./i;
+ 
+ /** Statuses TikTok/Instagram use when they refuse a server IP rather than the file. */
+ const UNUSABLE_STATUSES = [401, 403, 451];
+@@ -54,7 +80,9 @@ function isAllowed(raw: string): boolean {
+   try {
+     const parsed = new URL(raw);
+     if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username || parsed.password || parsed.port) return false;
+-    return matchesHost(parsed.hostname.toLowerCase(), ALLOWED_HOST_SUFFIXES);
++    const host = parsed.hostname.toLowerCase();
++    if (matchesHost(host, MEDIA_HOST_SUFFIXES)) return true;
++    return matchesHost(host, ['tiktok.com']) && TIKTOK_WEB_MEDIA_HOST.test(host);
+   } catch {
+     return false;
+   }
+diff --git a/app/lib/youtube.ts b/app/lib/youtube.ts
+index 9fb98ba..6359de8 100644
+--- a/app/lib/youtube.ts
++++ b/app/lib/youtube.ts
+@@ -107,13 +107,20 @@ function readCache(key: string): ResolvedVideo | null {
+     cache.delete(key);
+     return null;
+   }
++  // Re-insert on every hit so the Map's insertion order is also recency order.
++  cache.delete(key);
++  cache.set(key, hit);
+   return hit.value;
+ }
+ 
+ function writeCache(key: string, value: ResolvedVideo) {
+-  if (cache.size >= CACHE_MAX) {
++  // Re-inserting refreshes the position of an existing key instead of duplicating it.
++  cache.delete(key);
++  while (cache.size >= CACHE_MAX) {
++    // The first key is now the least recently used one, not merely the oldest.
+     const oldest = cache.keys().next().value;
+-    if (oldest) cache.delete(oldest);
++    if (oldest === undefined) break;
++    cache.delete(oldest);
+   }
+   cache.set(key, { value, expires: Date.now() + CACHE_TTL_MS });
+ }
+diff --git a/tests/proxy-referer.spec.mjs b/tests/proxy-referer.spec.mjs
+index 0d33cbe..f3c3c0c 100644
+--- a/tests/proxy-referer.spec.mjs
++++ b/tests/proxy-referer.spec.mjs
+@@ -27,3 +27,29 @@ test('uses TikTok referer for TikTok images', async (t) => {
+   assert.equal(response.status, 200);
+   assert.equal(headers.Referer, 'https://www.tiktok.com/');
+ });
++
++test('relays media hosts only, never site pages', async (t) => {
++  t.mock.method(globalThis, 'fetch', async () => new Response('bytes', { headers: { 'content-type': 'video/mp4' } }));
++
++  for (const blocked of [
++    'https://www.instagram.com/reel/Cx1y2z/',
++    'https://www.tiktok.com/@creator/video/123',
++    'https://m.tiktok.com/share/video/123',
++    'https://example.com/video.mp4',
++  ]) {
++    const response = await GET(new NextRequest(`http://test.local/api/proxy?url=${encodeURIComponent(blocked)}`));
++    assert.equal(response.status, 400, `${blocked} must not be relayed`);
++  }
++
++  for (const allowed of [
++    'https://scontent.cdninstagram.com/v/t50/video.mp4',
++    'https://scontent-lax3-1.fbcdn.net/video.mp4',
++    'https://v16-webapp-prime.us.tiktok.com/video/tos/example.mp4',
++    'https://v19-webapp-prime.tiktok.com/video/tos/example.mp4',
++    'https://p16-sign-va.tiktokcdn-us.com/obj/cover.jpg',
++    'https://www.tikwm.com/video/example.mp4',
++  ]) {
++    const response = await GET(new NextRequest(`http://test.local/api/proxy?url=${encodeURIComponent(allowed)}`));
++    assert.equal(response.status, 200, `${allowed} should still download`);
++  }
++});
+diff --git a/tests/youtube.test.mjs b/tests/youtube.test.mjs
+index 969193f..7dbb7d1 100644
+--- a/tests/youtube.test.mjs
++++ b/tests/youtube.test.mjs
+@@ -1,7 +1,7 @@
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { Innertube } from 'youtubei.js';
+-import { extractVideoId, resolveYouTubeVideo } from '../app/lib/youtube.ts';
++import { extractVideoId, getInnertube, resolveYouTubeVideo } from '../app/lib/youtube.ts';
+ 
+ test('extracts the video ID from a shared YouTube URL with tracking parameters', () => {
+   assert.equal(extractVideoId('https://youtu.be/cpUxjLKPkLI?si=q6C91YdGKMTtWjzH'), 'cpUxjLKPkLI');
+@@ -61,3 +61,42 @@ test('deciphers direct URLs and refreshes a rejected cached stream', async (t) =
+   const afterFailure = await resolveYouTubeVideo('cpUxjLKPkLI');
+   assert.equal(afterFailure.streamUrl, 'https://example.com/deciphered-4');
+ });
++
++test('evicts the least recently used cached stream, not merely the oldest', async () => {
++  // getInnertube() memoizes its client, so instrument the cached instance instead
++  // of `Innertube.create` (which the first test already stubbed).
++  const yt = await getInnertube();
++  const realGetBasicInfo = yt.getBasicInfo;
++  const lookups = [];
++  yt.getBasicInfo = async (videoId) => {
++    lookups.push(videoId);
++    return {
++      playability_status: { status: 'OK' },
++      streaming_data: {},
++      basic_info: { title: 'Video', author: 'Creator', thumbnail: [] },
++      chooseFormat: () => ({
++        url: `https://example.com/${videoId}`,
++        mime_type: 'video/mp4',
++        decipher: async () => `https://example.com/${videoId}`,
++      }),
++    };
++  };
++
++  try {
++    for (let index = 0; index < 50; index++) await resolveYouTubeVideo(`lru-${index}`);
++    // Touch the first entry so it becomes the most recently used one.
++    await resolveYouTubeVideo('lru-0');
++    assert.equal(lookups.length, 50);
++
++    // This insert overflows the cache; the untouched lru-1 must be the one dropped.
++    await resolveYouTubeVideo('lru-50');
++    assert.equal(lookups.length, 51);
++    await resolveYouTubeVideo('lru-0');
++    assert.equal(lookups.length, 51, 'the refreshed entry must stay cached');
++    await resolveYouTubeVideo('lru-1');
++    assert.equal(lookups.length, 52, 'the least recently used entry must be evicted');
++    assert.equal(lookups.at(-1), 'lru-1');
++  } finally {
++    yt.getBasicInfo = realGetBasicInfo;
++  }
++});
