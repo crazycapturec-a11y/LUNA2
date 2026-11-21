@@ -19,6 +19,7 @@ export const dynamic = 'force-dynamic';
  * the visitor cookies captured from the TikTok page itself.
  */
 
+/** Domains that get the matching Referer/cookies. Broader than the fetch allowlist. */
 const INSTAGRAM_HOST_SUFFIXES = ['cdninstagram.com', 'fbcdn.net', 'instagram.com'];
 const TIKTOK_HOST_SUFFIXES = [
   'tiktokcdn.com',
@@ -32,7 +33,32 @@ const TIKTOK_HOST_SUFFIXES = [
   'muscdn.com',
   'musical.ly',
 ];
-const ALLOWED_HOST_SUFFIXES = [...INSTAGRAM_HOST_SUFFIXES, ...TIKTOK_HOST_SUFFIXES, 'tikwm.com'];
+/**
+ * Hosts we actually fetch media from. Page hosts (`www.instagram.com`,
+ * `www.tiktok.com`) are deliberately absent: they only serve HTML, and allowing
+ * them would turn this route into a general-purpose relay for any profile or
+ * post URL.
+ */
+const INSTAGRAM_MEDIA_HOSTS = ['cdninstagram.com', 'fbcdn.net'];
+const TIKTOK_MEDIA_HOSTS = [
+  'tiktokcdn.com',
+  'tiktokcdn-us.com',
+  'tiktokcdn-eu.com',
+  'tiktokv.com',
+  'tiktokv.us',
+  'byteoversea.com',
+  'ibytedtos.com',
+  'muscdn.com',
+  'musical.ly',
+];
+/** tikwm answers with `/video/...` paths that only resolve on its own domain. */
+const TIKWM_MEDIA_HOSTS = ['tikwm.com'];
+const MEDIA_HOST_SUFFIXES = [...INSTAGRAM_MEDIA_HOSTS, ...TIKTOK_MEDIA_HOSTS, ...TIKWM_MEDIA_HOSTS];
+/**
+ * TikTok's video edges live on tiktok.com itself (`v16-webapp-prime.us.tiktok.com`),
+ * so keep those while rejecting page hosts under the same domain.
+ */
+const TIKTOK_WEB_MEDIA_HOST = /^v\d+-[a-z0-9-]*webapp[a-z0-9-]*\./i;
 
 /** Statuses TikTok/Instagram use when they refuse a server IP rather than the file. */
 const UNUSABLE_STATUSES = [401, 403, 451];
@@ -54,7 +80,9 @@ function isAllowed(raw: string): boolean {
   try {
     const parsed = new URL(raw);
     if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username || parsed.password || parsed.port) return false;
-    return matchesHost(parsed.hostname.toLowerCase(), ALLOWED_HOST_SUFFIXES);
+    const host = parsed.hostname.toLowerCase();
+    if (matchesHost(host, MEDIA_HOST_SUFFIXES)) return true;
+    return matchesHost(host, ['tiktok.com']) && TIKTOK_WEB_MEDIA_HOST.test(host);
   } catch {
     return false;
   }

@@ -107,13 +107,20 @@ function readCache(key: string): ResolvedVideo | null {
     cache.delete(key);
     return null;
   }
+  // Re-insert on every hit so the Map's insertion order is also recency order.
+  cache.delete(key);
+  cache.set(key, hit);
   return hit.value;
 }
 
 function writeCache(key: string, value: ResolvedVideo) {
-  if (cache.size >= CACHE_MAX) {
+  // Re-inserting refreshes the position of an existing key instead of duplicating it.
+  cache.delete(key);
+  while (cache.size >= CACHE_MAX) {
+    // The first key is now the least recently used one, not merely the oldest.
     const oldest = cache.keys().next().value;
-    if (oldest) cache.delete(oldest);
+    if (oldest === undefined) break;
+    cache.delete(oldest);
   }
   cache.set(key, { value, expires: Date.now() + CACHE_TTL_MS });
 }
