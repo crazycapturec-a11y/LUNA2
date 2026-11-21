@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Innertube } from 'youtubei.js';
-import { extractVideoId, resolveYouTubeVideo } from '../app/lib/youtube.ts';
+import { extractVideoId, getInnertube, resolveYouTubeVideo } from '../app/lib/youtube.ts';
 
 test('extracts the video ID from a shared YouTube URL with tracking parameters', () => {
   assert.equal(extractVideoId('https://youtu.be/cpUxjLKPkLI?si=q6C91YdGKMTtWjzH'), 'cpUxjLKPkLI');
@@ -60,4 +60,43 @@ test('deciphers direct URLs and refreshes a rejected cached stream', async (t) =
   }));
   const afterFailure = await resolveYouTubeVideo('cpUxjLKPkLI');
   assert.equal(afterFailure.streamUrl, 'https://example.com/deciphered-4');
+});
+
+test('evicts the least recently used cached stream, not merely the oldest', async () => {
+  // getInnertube() memoizes its client, so instrument the cached instance instead
+  // of `Innertube.create` (which the first test already stubbed).
+  const yt = await getInnertube();
+  const realGetBasicInfo = yt.getBasicInfo;
+  const lookups = [];
+  yt.getBasicInfo = async (videoId) => {
+    lookups.push(videoId);
+    return {
+      playability_status: { status: 'OK' },
+      streaming_data: {},
+      basic_info: { title: 'Video', author: 'Creator', thumbnail: [] },
+      chooseFormat: () => ({
+        url: `https://example.com/${videoId}`,
+        mime_type: 'video/mp4',
+        decipher: async () => `https://example.com/${videoId}`,
+      }),
+    };
+  };
+
+  try {
+    for (let index = 0; index < 50; index++) await resolveYouTubeVideo(`lru-${index}`);
+    // Touch the first entry so it becomes the most recently used one.
+    await resolveYouTubeVideo('lru-0');
+    assert.equal(lookups.length, 50);
+
+    // This insert overflows the cache; the untouched lru-1 must be the one dropped.
+    await resolveYouTubeVideo('lru-50');
+    assert.equal(lookups.length, 51);
+    await resolveYouTubeVideo('lru-0');
+    assert.equal(lookups.length, 51, 'the refreshed entry must stay cached');
+    await resolveYouTubeVideo('lru-1');
+    assert.equal(lookups.length, 52, 'the least recently used entry must be evicted');
+    assert.equal(lookups.at(-1), 'lru-1');
+  } finally {
+    yt.getBasicInfo = realGetBasicInfo;
+  }
 });
